@@ -81,3 +81,6 @@ plugins:
   hello_world:
     module: "free_fleet_examples.actions.hello_world"
     actions: ["hello_world", "delayed_hello_world"]
+  zc_action:
+    module: "free_fleet_examples.actions.zc_action"
+    actions: ["docking"]

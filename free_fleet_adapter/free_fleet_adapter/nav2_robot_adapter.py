@@ -447,7 +447,8 @@ class Nav2RobotAdapter(RobotAdapter):
         y: float,
         z: float,
         yaw: float,
-        nav_handle: ExecutionHandle
+        nav_handle: ExecutionHandle,
+        bt_file: str = '/data/behavior_trees/zc_nav_rmf.xml'
     ):
         if map_name != self.map_name:
             # TODO(ac): test this map related replanning behavior
@@ -486,7 +487,7 @@ class Nav2RobotAdapter(RobotAdapter):
         req = NavigateThroughPoses_SendGoal_Request(
             goal_id=nav_goal_id,
             poses=[pose_stamped],
-            behavior_tree='/data/behavior_trees/zc_nav_rmf.xml'
+            behavior_tree=bt_file
         )
 
         replies = self.zenoh_session.get(
@@ -588,6 +589,16 @@ class Nav2RobotAdapter(RobotAdapter):
         description: dict,
         execution: ActivityIdentifier
     ):
+        self._handle_navigate_through_poses(
+            "L1",
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            ExecutionHandle(execution),
+            bt_file='/data/actions/reflector_docking.xml'
+        )
+
         current_exec_handle = self.exec_handle
         if current_exec_handle is not None and \
                 current_exec_handle.action is not None:
