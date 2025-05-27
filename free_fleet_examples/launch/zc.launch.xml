@@ -10,4 +10,10 @@
     <arg name="server_uri" value="$(var server_uri)"/>
     <arg name="headless" value="$(var headless)"/>
   </include>
+    <node pkg="zc_door_adapter"
+        exec="zc_door_adapter"
+        args="-c /data/ws_free_fleet/src/door_adapter_template/config.yaml"
+        output="both">
+
+  </node>
 </launch>
