@@ -633,7 +633,7 @@ class Nav2RobotAdapter(RobotAdapter):
                 0.0,
                 0.0,
                 0.0,
-                ExecutionHandle(execution),
+                self.exec_handle,
                 bt_file='/data/actions/reflector_docking.xml'
             )
             return
