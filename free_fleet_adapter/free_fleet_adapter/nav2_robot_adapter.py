@@ -594,15 +594,7 @@ class Nav2RobotAdapter(RobotAdapter):
         description: dict,
         execution: ActivityIdentifier
     ):
-        self._handle_navigate_through_poses(
-            "L1",
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            ExecutionHandle(execution),
-            bt_file='/data/actions/reflector_docking.xml'
-        )
+
 
         current_exec_handle = self.exec_handle
         if current_exec_handle is not None and \
@@ -635,6 +627,15 @@ class Nav2RobotAdapter(RobotAdapter):
             )
             self.exec_handle = ExecutionHandle(execution)
             self.exec_handle.set_action(robot_action)
+            self._handle_navigate_through_poses(
+                "L1",
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                ExecutionHandle(execution),
+                bt_file='/data/actions/reflector_docking.xml'
+            )
             return
 
         # TODO(ac): change map using map_server load_map, and set initial
