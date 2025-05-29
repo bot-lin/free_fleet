@@ -201,10 +201,7 @@ def start_fleet_adapter(
             asyncio.get_event_loop().run_until_complete(
                 asyncio.wait(update_jobs)
             )
-            new = node.get_clock().now()
-            node.get_logger().info(
-                f'Robot state update took {(new.nanoseconds - now.nanoseconds)/1e9:.3f} seconds'
-            )
+            
 
             next_wakeup = now + Duration(nanoseconds=update_period*1e9)
             while node.get_clock().now() < next_wakeup:
@@ -239,21 +236,17 @@ def parallel(f):
 
 @parallel
 def update_robot(robot: Nav1RobotAdapter | Nav2RobotAdapter):
-    robot.node.get_logger().info('--------------------------1')
     robot_pose = robot.get_pose()
-    robot.node.get_logger().info('--------------------------2')
     if robot_pose is None:
         robot.node.get_logger().info(f'Failed to pose of robot [{robot.name}]')
         return None
-    robot.node.get_logger().info('--------------------------3')
+
     state = rmf_easy.RobotState(
         robot.get_map_name(),
         robot_pose,
         robot.get_battery_soc()
     )
-    robot.node.get_logger().info('--------------------------4')
     robot.update(state)
-    robot.node.get_logger().info('--------------------------5')
 
 
 # ------------------------------------------------------------------------------
