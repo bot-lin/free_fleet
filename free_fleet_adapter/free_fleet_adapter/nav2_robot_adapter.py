@@ -527,6 +527,10 @@ class Nav2RobotAdapter(RobotAdapter):
                 self.update_handle.more().replan()
                 return
             except Exception as e:
+                self.node.get_logger().info(
+                    f'Failed to deserialize NavigateThroughPoses_SendGoal '
+                    f'reply for robot [{self.name}]: {type(e)}: {e}'
+                )
                 payload = reply.err.payload.to_string()
                 self.node.get_logger().error(
                     f'Received (ERROR: {payload}: {type(e)}: {e})'
