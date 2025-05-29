@@ -201,6 +201,10 @@ def start_fleet_adapter(
             asyncio.get_event_loop().run_until_complete(
                 asyncio.wait(update_jobs)
             )
+            new = node.get_clock().now()
+            node.get_logger().info(
+                f'Robot state update took {new - now} seconds'
+            )
 
             next_wakeup = now + Duration(nanoseconds=update_period*1e9)
             while node.get_clock().now() < next_wakeup:
