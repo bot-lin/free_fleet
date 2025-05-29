@@ -61,3 +61,18 @@ def get_zenoh_name_of_ros1_topic(
     zenoh_topic = '/'.join([msg_type_encoded, md5, topic[1:]])
 
     return zenoh_topic
+
+last_message_printed = ""
+def print_same_message_once(
+    node,
+    message: str
+) -> None:
+    """
+    Print a message only if it is different from the last printed message.
+
+    This is useful to avoid flooding the console with the same message.
+    """
+    global last_message_printed
+    if message != last_message_printed:
+        node.get_logger().info(message)
+        last_message_printed = message

@@ -36,6 +36,7 @@ from free_fleet.ros2_types import (
 from free_fleet.utils import (
     make_nav2_cancel_all_goals_request,
     namespacify,
+    print_same_message_once,
 )
 
 from free_fleet_adapter.action import (
@@ -412,6 +413,13 @@ class Nav2RobotAdapter(RobotAdapter):
         exec_handle = self.exec_handle
         if exec_handle:
             # Handle navigation
+            print_same_message_once(
+                self.node,
+                f'Robot [{self.name}] is executing command '
+                f'[{exec_handle.execution}] with goal ID '
+                f'[{exec_handle.goal_id}]'
+            )
+
             if exec_handle.execution and exec_handle.goal_id and \
                     self._is_navigation_done(exec_handle):
                 # TODO(ac): Refactor this check as as self._is_navigation_done
