@@ -453,7 +453,8 @@ class Nav2RobotAdapter(RobotAdapter):
         z: float,
         yaw: float,
         nav_handle: ExecutionHandle,
-        bt_file: str = '/data/behavior_trees/zc_nav_rmf.xml'
+        bt_file: str = '/data/behavior_trees/zc_nav_rmf.xml',
+        robot_action = None
     ):
         if map_name != self.map_name:
             # TODO(ac): test this map related replanning behavior
@@ -509,7 +510,12 @@ class Nav2RobotAdapter(RobotAdapter):
                     self.node.get_logger().info(
                         f'Navigation goal {nav_goal_id} accepted'
                     )
-                    nav_handle.set_goal_id(nav_goal_id)
+                    if robot_action is not None:
+                        nav_handle.set_action_and_goal_id(
+                            robot_action, nav_goal_id
+                        )
+                    else:
+                        nav_handle.set_goal_id(nav_goal_id)
                     return
 
                 self.replan_counts += 1
@@ -633,10 +639,8 @@ class Nav2RobotAdapter(RobotAdapter):
             robot_action = action_factory.perform_action(
                 category, description, execution
             )
-            self._request_stop(self.exec_handle)
 
             self.exec_handle = ExecutionHandle(execution)
-            self.exec_handle.set_action(robot_action)
             self._handle_navigate_through_poses(
                 "L1",
                 0.0,
@@ -644,7 +648,8 @@ class Nav2RobotAdapter(RobotAdapter):
                 0.0,
                 0.0,
                 self.exec_handle,
-                bt_file='/data/actions/reflector_docking.xml'
+                bt_file='/data/actions/reflector_docking.xml',
+                robot_action=robot_action
             )
             return
 

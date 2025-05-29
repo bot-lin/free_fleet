@@ -38,6 +38,11 @@ class ExecutionHandle:
     def set_action(self, action):
         self.action = action
         self.mutex.release()
+    
+    def set_action_and_goal_id(self, action, goal_id):
+        self.action = action
+        self.goal_id = goal_id
+        self.mutex.release()
 
     @property
     def activity(self) -> ActivityIdentifier | None:
