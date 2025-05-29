@@ -423,18 +423,18 @@ class Nav2RobotAdapter(RobotAdapter):
                 # whether navigation or custom executions
                 self.replan_counts = 0
             # Handle custom actions
-            elif exec_handle.execution and exec_handle.action:
-                current_action_state = exec_handle.action.update_action()
-                match current_action_state:
-                    case RobotActionState.CANCELED | \
-                            RobotActionState.COMPLETED | \
-                            RobotActionState.FAILED:
-                        self.node.get_logger().info(
-                            f'Robot [{self.name}] current action '
-                            f'[{current_action_state}]'
-                        )
-                        exec_handle.execution.finished()
-                        exec_handle.action = None
+            # elif exec_handle.execution and exec_handle.action:
+            #     current_action_state = exec_handle.action.update_action()
+            #     match current_action_state:
+            #         case RobotActionState.CANCELED | \
+            #                 RobotActionState.COMPLETED | \
+            #                 RobotActionState.FAILED:
+            #             self.node.get_logger().info(
+            #                 f'Robot [{self.name}] current action '
+            #                 f'[{current_action_state}]'
+            #             )
+            #             exec_handle.execution.finished()
+            #             exec_handle.action = None
             # Commands are still being carried out
             activity_identifier = exec_handle.activity
 
