@@ -408,7 +408,7 @@ class Nav2RobotAdapter(RobotAdapter):
                 'yet been initialized with a fleet update handle.'
             self.node.get_logger().error(error_message)
             return
-
+        self.node.get_logger().info('--------------------------4.1')
         activity_identifier = None
         exec_handle = self.exec_handle
         if exec_handle:
@@ -419,6 +419,7 @@ class Nav2RobotAdapter(RobotAdapter):
                 f'[{exec_handle.execution}] with goal ID '
                 f'[{exec_handle.goal_id}]'
             )
+            self.node.get_logger().info('--------------------------4.2')
 
             if exec_handle.execution and exec_handle.goal_id and \
                     self._is_navigation_done(exec_handle):
@@ -444,7 +445,10 @@ class Nav2RobotAdapter(RobotAdapter):
             #             exec_handle.execution.finished()
             #             exec_handle.action = None
             # Commands are still being carried out
+            self.node.get_logger().info('--------------------------4.3')
+
             activity_identifier = exec_handle.activity
+        self.node.get_logger().info('--------------------------4.4')
 
         self.update_handle.update(state, activity_identifier)
 
