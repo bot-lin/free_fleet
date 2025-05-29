@@ -633,6 +633,8 @@ class Nav2RobotAdapter(RobotAdapter):
             robot_action = action_factory.perform_action(
                 category, description, execution
             )
+            self._request_stop(self.exec_handle)
+
             self.exec_handle = ExecutionHandle(execution)
             self.exec_handle.set_action(robot_action)
             self._handle_navigate_through_poses(
