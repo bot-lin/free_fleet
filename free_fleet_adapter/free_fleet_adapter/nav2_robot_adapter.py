@@ -412,11 +412,6 @@ class Nav2RobotAdapter(RobotAdapter):
         exec_handle = self.exec_handle
         if exec_handle:
             # Handle navigation
-            self.node.get_logger().info(
-                f'Robot [{self.name}] is executing command '
-                f'[{exec_handle.execution}] with goal ID '
-                f'[{exec_handle.goal_id}]'
-            )
             if exec_handle.execution and exec_handle.goal_id and \
                     self._is_navigation_done(exec_handle):
                 # TODO(ac): Refactor this check as as self._is_navigation_done
