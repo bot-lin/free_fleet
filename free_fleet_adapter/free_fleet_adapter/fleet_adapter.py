@@ -203,7 +203,7 @@ def start_fleet_adapter(
             )
             new = node.get_clock().now()
             node.get_logger().info(
-                f'Robot state update took {new - now} seconds'
+                f'Robot state update took {(new.nanoseconds - now.nanoseconds)/1e9:.3f} seconds'
             )
 
             next_wakeup = now + Duration(nanoseconds=update_period*1e9)
