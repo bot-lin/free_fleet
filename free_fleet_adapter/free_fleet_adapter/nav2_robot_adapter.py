@@ -53,7 +53,7 @@ from rmf_adapter.robot_update_handle import ActivityIdentifier, Tier
 from tf_transformations import euler_from_quaternion, quaternion_from_euler
 
 import zenoh
-
+import traceback
 
 class Nav2TfHandler:
 
@@ -530,6 +530,10 @@ class Nav2RobotAdapter(RobotAdapter):
                 self.node.get_logger().info(
                     f'Failed to deserialize NavigateThroughPoses_SendGoal '
                     f'reply for robot [{self.name}]: {type(e)}: {e}'
+                )
+                error_traceback = traceback.format_exc()
+                self.node.get_logger().info(
+                    f'Error traceback: {error_traceback}'
                 )
                 payload = reply.err.payload.to_string()
                 self.node.get_logger().error(
