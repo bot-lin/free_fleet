@@ -41,7 +41,7 @@ foreach(path ${traffic_editor_paths})
 
   install(
     DIRECTORY ${output_dir}
-    DESTINATION share/${PROJECT_NAME}/maps
+    DESTINATION /data/maps/install
   )
 
 endforeach()
