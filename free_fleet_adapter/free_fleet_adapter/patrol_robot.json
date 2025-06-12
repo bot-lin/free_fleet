@@ -1,0 +1,23 @@
+{
+    "type":"robot_task_request",
+    "robot":"nest_2777af2b92e0fa78",
+    "fleet":"zc",
+    "request":
+    {
+        "category":"patrol",
+        "description":
+        {
+            "places":["office"],
+            "rounds":1
+        },
+        "unix_millis_earliest_start_time":0,
+        "unix_millis_request_time":1749693983466,
+        "priority":
+        {
+            "type":"binary",
+            "value":0
+        },
+        "requester":"admin",
+        "labels":["task_definition_id=patrol","destination=office"]
+    }
+}
