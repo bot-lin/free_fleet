@@ -434,7 +434,7 @@ class Nav2RobotAdapter(RobotAdapter):
         z: float,
         yaw: float,
         nav_handle: ExecutionHandle,
-        bt_file: str = '/data/behavior_trees/zc_nav.xml',
+        bt_file: str = '/data/behavior_trees/zc_nav_rmf.xml',
         robot_action = None
     ):
         if map_name != self.map_name:
