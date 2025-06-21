@@ -596,6 +596,9 @@ class Nav2RobotAdapter(RobotAdapter):
 
         # Step 3: Update the execution state if still valid
         with self.adapter_mutex:
+            self.node.get_logger().info("self.exec_handle: {}, exec_handle: {}".format(
+                self.exec_handle, exec_handle
+            ))
             if self.exec_handle == exec_handle and exec_handle.execution:
                 if is_done:
                     exec_handle.execution.finished()
