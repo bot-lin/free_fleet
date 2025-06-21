@@ -595,6 +595,10 @@ class Nav2RobotAdapter(RobotAdapter):
         is_done = self._is_navigation_done(goal_id)
 
         # Step 3: Update the execution state if still valid
+        self.node.get_logger().info(
+            f'Checking navigation status for robot [{self.name}] with '
+            f'goal_id: {goal_id}, is_done: {is_done}'
+        )
         with self.adapter_mutex:
             self.node.get_logger().info("self.exec_handle: {}, exec_handle: {}".format(
                 self.exec_handle, exec_handle
