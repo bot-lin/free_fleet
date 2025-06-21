@@ -31,7 +31,6 @@ import rmf_adapter
 from rmf_adapter import Adapter, Transformation
 import rmf_adapter.easy_full_control as rmf_easy
 import rmf_adapter.fleet_update_handle as rmf_fleet
-
 from tf2_ros import Buffer
 import yaml
 import zenoh
@@ -129,20 +128,20 @@ def start_fleet_adapter(
         confirm.accept()
         return confirm
 
-    for plugin_name, plugin_data in plugin_config.items():
-        plugin_actions = plugin_data.get('actions')
-        if not plugin_actions:
-            node.get_logger().warn(
-                f'No action provided for plugin [{plugin_name}]! Fleet '
-                f'[{fleet_handle.fleet_name}] will not bid on tasks submitted '
-                f'with actions associated with this plugin unless the action '
-                f'is registered as a performable action for this fleet by '
-                f'the user.'
-            )
-            continue
-        for action in plugin_actions:
-            fleet_handle.more().add_performable_action(action, _accept_action)
-
+    if plugin_config is not None:
+        for plugin_name, plugin_data in plugin_config.items():
+            plugin_actions = plugin_data.get('actions')
+            if not plugin_actions:
+                node.get_logger().warn(
+                    f'No action provided for plugin [{plugin_name}]! Fleet '
+                    f'[{fleet_handle.fleet_name}] will not bid on tasks submitted '
+                    f'with actions associated with this plugin unless the action '
+                    f'is registered as a performable action for this fleet by '
+                    f'the user.'
+                )
+                continue
+            for action in plugin_actions:
+                fleet_handle.more().add_performable_action(action, _accept_action)
 
     robots = {}
     for robot_name in fleet_config.known_robots:
@@ -201,7 +200,6 @@ def start_fleet_adapter(
             asyncio.get_event_loop().run_until_complete(
                 asyncio.wait(update_jobs)
             )
-            
 
             next_wakeup = now + Duration(nanoseconds=update_period*1e9)
             while node.get_clock().now() < next_wakeup:
