@@ -603,6 +603,12 @@ class Nav2RobotAdapter(RobotAdapter):
             self.node.get_logger().info("self.exec_handle: {}, exec_handle: {}".format(
                 self.exec_handle, exec_handle
             ))
+            self.node.get_logger().info(
+                "self.exec_handle.execution: {}, exec_handle.execution: {}".format(
+                    self.exec_handle.execution if self.exec_handle else None,
+                    exec_handle.execution if exec_handle else None
+                )
+            )
             if self.exec_handle == exec_handle and exec_handle.execution:
                 if is_done:
                     self.node.get_logger().info(
