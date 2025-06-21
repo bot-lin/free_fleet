@@ -235,61 +235,62 @@ class Nav2RobotAdapter(RobotAdapter):
             return
 
         # Import and store plugin actions and action factories
-        if plugin_config is not None:
-            for plugin_name, action_config in plugin_config.items():
-                try:
-                    module = action_config['module']
-                    plugin = importlib.import_module(module)
-                    action_context = RobotActionContext(
-                        self.node,
-                        self.name,
-                        self.update_handle,
-                        self.fleet_config,
-                        action_config,
-                        self.get_battery_soc,
-                        self.get_map_name,
-                        self.get_pose
-                    )
-                    action_factory = plugin.ActionFactory(action_context)
-                    for action in action_factory.actions:
-                        # Verify that this action is not duplicated across plugins
-                        target_plugin = self.action_to_plugin_name.get(action)
-                        if (target_plugin is not None and
-                                target_plugin != plugin_name):
-                            raise Exception(
-                                f'Action [{action}] is indicated to be supported '
-                                f'by multiple plugins: {target_plugin} and '
-                                f'{plugin_name}. The fleet adapter is unable to '
-                                f'select the intended plugin to be paired for '
-                                f'this action. Please ensure that action names '
-                                f'are not duplicated across supported plugins. '
-                                f'Unable to create ActionFactory for '
-                                f'{plugin_name}. Robot [{self.name}] will not be '
-                                f'able to perform actions associated with this '
-                                f'plugin.'
-                            )
-                        # Verify that this ActionFactory supports this action
-                        if not action_factory.supports_action(action):
-                            raise ValueError(
-                                f'The plugin config provided [{action}] as a '
-                                f'performable action, but it is not a supported '
-                                f'action in the {plugin_name} ActionFactory!'
-                            )
-                        self.action_to_plugin_name[action] = plugin_name
-                    self.action_factories[plugin_name] = action_factory
-                except KeyError:
-                    self.node.get_logger().info(
-                        f'Unable to create ActionFactory for {plugin_name}! '
-                        f'Configured plugin config is invalid. '
-                        f'Robot [{self.name}] will not be able to perform '
-                        f'actions associated with this plugin.'
-                    )
-                except ImportError:
-                    self.node.get_logger().info(
-                        f'Unable to import module for {plugin_name}! '
-                        f'Robot [{self.name}] will not be able to perform '
-                        f'actions associated with this plugin.'
-                    )
+        for plugin_name, action_config in plugin_config.items():
+            try:
+                module = action_config['module']
+                plugin = importlib.import_module(module)
+                action_context = RobotActionContext(
+                    self.node,
+                    self.name,
+                    self.update_handle,
+                    self.fleet_config,
+                    action_config,
+                    self.get_battery_soc,
+                    self.get_map_name,
+                    self.get_pose
+                )
+                action_factory = plugin.ActionFactory(action_context)
+                for action in action_factory.actions:
+                    # Verify that this action is not duplicated across plugins
+                    target_plugin = self.action_to_plugin_name.get(action)
+                    if (target_plugin is not None and
+                            target_plugin != plugin_name):
+                        raise Exception(
+                            f'Action [{action}] is indicated to be supported '
+                            f'by multiple plugins: {target_plugin} and '
+                            f'{plugin_name}. The fleet adapter is unable to '
+                            f'select the intended plugin to be paired for '
+                            f'this action. Please ensure that action names '
+                            f'are not duplicated across supported plugins. '
+                            f'Unable to create ActionFactory for '
+                            f'{plugin_name}. Robot [{self.name}] will not be '
+                            f'able to perform actions associated with this '
+                            f'plugin.'
+                        )
+                    # Verify that this ActionFactory supports this action
+                    if not action_factory.supports_action(action):
+                        raise ValueError(
+                            f'The plugin config provided [{action}] as a '
+                            f'performable action, but it is not a supported '
+                            f'action in the {plugin_name} ActionFactory!'
+                        )
+                    self.action_to_plugin_name[action] = plugin_name
+                self.action_factories[plugin_name] = action_factory
+            except KeyError:
+                self.node.get_logger().info(
+                    f'Unable to create ActionFactory for {plugin_name}! '
+                    f'Configured plugin config is invalid. '
+                    f'Robot [{self.name}] will not be able to perform '
+                    f'actions associated with this plugin.'
+                )
+            except ImportError:
+                self.node.get_logger().info(
+                    f'Unable to import module for {plugin_name}! '
+                    f'Robot [{self.name}] will not be able to perform '
+                    f'actions associated with this plugin.'
+                )
+        self.adapter_mutex = threading.Lock()
+        self.check_timer = self.node.create_timer(1.0, self.check_navigation_status)
 
 
 
@@ -321,11 +322,11 @@ class Nav2RobotAdapter(RobotAdapter):
         ]
         return robot_pose
 
-    def _is_navigation_done(self, nav_handle: ExecutionHandle) -> bool:
-        if nav_handle.goal_id is None:
+    def _is_navigation_done(self, goal_id: list[int]) -> bool:
+        if goal_id is None:
             return True
 
-        req = NavigateThroughPoses_GetResult_Request(goal_id=nav_handle.goal_id)
+        req = NavigateThroughPoses_GetResult_Request(goal_id=goal_id)
         # TODO(ac): parameterize the service call timeout
         replies = self.zenoh_session.get(
             namespacify('navigate_through_poses/_action/get_result', self.name),
@@ -346,7 +347,7 @@ class Nav2RobotAdapter(RobotAdapter):
                         return False
                     case GoalStatus.STATUS_SUCCEEDED.value:
                         self.node.get_logger().info(
-                            f'Navigation goal {nav_handle.goal_id} reached'
+                            f'Navigation goal {goal_id} reached'
                         )
                         if self.nav_issue_ticket is not None:
                             msg = {}
@@ -358,21 +359,21 @@ class Nav2RobotAdapter(RobotAdapter):
                         return True
                     case GoalStatus.STATUS_CANCELED.value:
                         self.node.get_logger().info(
-                            f'Navigation goal {nav_handle.goal_id} was cancelled'
+                            f'Navigation goal {goal_id} was cancelled'
                         )
                         return True
                     case _:
                         self.nav_issue_ticket = self.create_nav_issue_ticket(
                             'navigation',
                             f'Navigate to pose result status [{rep.status}]',
-                            nav_handle.goal_id
+                            goal_id
                         )
 
                         # TODO(ac): test replanning behavior if goal status is
                         # neither executing or succeeded
                         self.replan_counts += 1
                         self.node.get_logger().error(
-                            f'Navigation goal {nav_handle.goal_id} status '
+                            f'Navigation goal {goal_id} status '
                             f'{rep.status}, replan count '
                             f'[{self.replan_counts}]'
                         )
@@ -415,35 +416,13 @@ class Nav2RobotAdapter(RobotAdapter):
             self.node.get_logger().error(error_message)
             return
 
-        activity_identifier = None
-        exec_handle = self.exec_handle
-        if exec_handle:
-            # Handle navigation
-            if exec_handle.execution and exec_handle.goal_id and \
-                    self._is_navigation_done(exec_handle):
-                # TODO(ac): Refactor this check as as self._is_navigation_done
-                # takes a while and the execution may have become None due to
-                # task cancellation.
-                exec_handle.execution.finished()
-                exec_handle.execution = None
-                # TODO(ac): use an enum to record what type of execution it is,
-                # whether navigation or custom executions
-                self.replan_counts = 0
-            # Handle custom actions
-            elif exec_handle.execution and exec_handle.action:
-                current_action_state = exec_handle.action.update_action()
-                match current_action_state:
-                    case RobotActionState.CANCELED | \
-                            RobotActionState.COMPLETED | \
-                            RobotActionState.FAILED:
-                        self.node.get_logger().info(
-                            f'Robot [{self.name}] current action '
-                            f'[{current_action_state}]'
-                        )
-                        exec_handle.execution.finished()
-                        exec_handle.action = None
-            # Commands are still being carried out
-            activity_identifier = exec_handle.activity
+        # Safely determine the current activity
+        with self.adapter_mutex:
+            activity_identifier = (
+                self.exec_handle.activity
+                if self.exec_handle and self.exec_handle.execution
+                else None
+            )
 
         self.update_handle.update(state, activity_identifier)
 
@@ -459,12 +438,8 @@ class Nav2RobotAdapter(RobotAdapter):
         robot_action = None
     ):
         if map_name is None:
+            # If map_name is None, use the current map name
             map_name = self.map_name
-            print_same_message_once(
-                self.node.get_logger(),
-                f'No map name provided, using robot [{self.name}] map '
-                f'[{map_name}]'
-            )
         if map_name != self.map_name:
             # TODO(ac): test this map related replanning behavior
             self.replan_counts += 1
@@ -519,7 +494,6 @@ class Nav2RobotAdapter(RobotAdapter):
                     self.node.get_logger().info(
                         f'Navigation goal {nav_goal_id} accepted'
                     )
-
                     if robot_action is not None:
                         nav_handle.set_action_and_goal_id(
                             robot_action, nav_goal_id
@@ -563,7 +537,8 @@ class Nav2RobotAdapter(RobotAdapter):
             f'Commanding [{self.name}] to navigate to {destination.position} '
             f'on map [{destination.map}]'
         )
-        self.exec_handle = ExecutionHandle(execution)
+        with self.adapter_mutex:
+            self.exec_handle = ExecutionHandle(execution)
         self._handle_navigate_through_poses(
             destination.map,
             destination.position[0],
@@ -598,15 +573,57 @@ class Nav2RobotAdapter(RobotAdapter):
             )
 
     def stop(self, activity: ActivityIdentifier):
-        exec_handle = self.exec_handle
-        if exec_handle is None:
-            return
-        if exec_handle.execution is not None and \
-                activity.is_same(exec_handle.activity):
+        exec_handle = None
+        with self.adapter_mutex:
+            if (self.exec_handle is not None and
+                    self.exec_handle.execution is not None and
+                    activity.is_same(self.exec_handle.activity)):
+                exec_handle = self.exec_handle
+                self.exec_handle = None
+
+        if exec_handle is not None:
             self._request_stop(exec_handle)
             self.exec_handle = None
 
+    def check_navigation_status(self):
+        # Step 1: Get the goal_id safely
+        goal_id = None
+        exec_handle = None
+        with self.adapter_mutex:
+            exec_handle = self.exec_handle
+            if exec_handle is None or exec_handle.goal_id is None:
+                return
+            goal_id = exec_handle.goal_id
 
+        # Step 2: Perform the navigation check outside the lock
+        is_done = self._is_navigation_done(goal_id)
+
+        # Step 3: Update the execution state if still valid
+        self.node.get_logger().info(
+            f'Checking navigation status for robot [{self.name}] with '
+            f'goal_id: {goal_id}, is_done: {is_done}'
+        )
+
+        with self.adapter_mutex:
+            self.node.get_logger().info("self.exec_handle: {}, exec_handle: {}".format(
+                self.exec_handle, exec_handle
+            ))
+            self.node.get_logger().info(
+                "self.exec_handle.execution: {}, exec_handle.execution: {}".format(
+                    self.exec_handle.execution if self.exec_handle else None,
+                    exec_handle.execution if exec_handle else None
+                )
+            )
+  
+            if self.exec_handle == exec_handle and exec_handle.execution:
+                if is_done:
+                    self.node.get_logger().info(
+                        f'Navigation for robot [{self.name}] with goal_id '
+                        f'{goal_id} is done.'
+                    )
+                    exec_handle.execution.finished()
+                    exec_handle.execution = None
+                    self.replan_counts = 0
 
     def execute_action(
         self,
