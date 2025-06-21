@@ -605,14 +605,15 @@ class Nav2RobotAdapter(RobotAdapter):
         )
 
         with self.adapter_mutex:
-            self.node.get_logger().info("self.exec_handle: {}, exec_handle: {}".format(
-                self.exec_handle, exec_handle
+            self.node.get_logger().info("self.exec_handle: {}".format(
+                self.exec_handle
             ))
             self.node.get_logger().info(
-                "self.exec_handle.execution: {}, exec_handle.execution: {}".format(
-                    self.exec_handle.execution if self.exec_handle else None,
-                    exec_handle.execution if exec_handle else None
-                )
+                "self.exec_handle.execution: {}, self.exec_handle.goal_id: {}, self.exec_handle.action: {}".format(
+                self.exec_handle.execution if self.exec_handle else None,
+                self.exec_handle.goal_id if self.exec_handle else None,
+                self.exec_handle.action if self.exec_handle else None
+            )
             )
   
             if self.exec_handle == exec_handle and exec_handle.execution:
@@ -623,7 +624,10 @@ class Nav2RobotAdapter(RobotAdapter):
                     )
                     exec_handle.execution.finished()
                     exec_handle.execution = None
+                    exec_handle.goal_id = None
+                    exec_handle.action = None
                     self.replan_counts = 0
+
 
     def execute_action(
         self,
