@@ -535,7 +535,9 @@ class Nav2RobotAdapter(RobotAdapter):
         self._request_stop(self.exec_handle)
         self.node.get_logger().info(
             f'Commanding [{self.name}] to navigate to {destination.position} '
-            f'on map [{destination.map}]'
+            f'on map [{destination.map}] '
+            f'named {destination.name} '
+            f'graph_index: {destination.graph_index}. '
         )
         with self.adapter_mutex:
             self.exec_handle = ExecutionHandle(execution)
