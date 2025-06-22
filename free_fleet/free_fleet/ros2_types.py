@@ -19,6 +19,9 @@ from enum import Enum
 
 import pycdr2
 from pycdr2 import IdlStruct
+from pycdr2.types import float64, int32, uint32, float32, int8, uint8, sequence, int64, uint16, int16
+from typing import List
+
 
 
 # https://github.com/ros2/rcl_interfaces/blob/rolling/builtin_interfaces/msg/Time.msg
@@ -224,3 +227,31 @@ class SensorMsgs_BatteryState(IdlStruct):
     cell_temperature: pycdr2.types.sequence[pycdr2.types.float32]
     location: str
     serial_number: str
+
+@dataclass
+class RclInterfaces_ParameterValue(IdlStruct):
+    type: uint8
+    bool_value: bool = None
+    integer_value: int64 = None
+    double_value: float64 = None
+    string_value: str = None
+    byte_array_value: List[uint8] = None
+    boolean_array_value: List[bool] = None
+    integer_array_value: List[int64] = None
+    double_array_value: List[float64] = None
+    string_array_value: List[str] = None
+@dataclass
+class RclInterfaces_Parameter(IdlStruct):
+    name: str
+    value: RclInterfaces_ParameterValue
+@dataclass
+class SetParameters_Request(IdlStruct):
+    parameters: List[RclInterfaces_Parameter]
+
+@dataclass
+class RclInterfaces_SetParametersResult(IdlStruct):
+    successful: bool
+    reason: str
+@dataclass
+class SetParameters_Response(IdlStruct):
+    results: List[RclInterfaces_SetParametersResult]

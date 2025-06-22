@@ -30,6 +30,11 @@ from free_fleet.ros2_types import (
     NavigateThroughPoses_SendGoal_Request,
     NavigateThroughPoses_SendGoal_Response,
     SensorMsgs_BatteryState,
+    RclInterfaces_ParameterValue,
+    RclInterfaces_Parameter,
+    SetParameters_Request,
+    RclInterfaces_SetParametersResult,
+    SetParameters_Response,
     TFMessage,
     Time,
 )
@@ -543,6 +548,11 @@ class Nav2RobotAdapter(RobotAdapter):
         )
         with self.adapter_mutex:
             self.exec_handle = ExecutionHandle(execution)
+        if self.dest_name == destination.name:
+            self._set_ros_controller_params(
+                'goal_checker.xy_goal_tolerance',
+                0.05
+            )
         self._handle_navigate_through_poses(
             destination.map,
             destination.position[0],
@@ -551,6 +561,64 @@ class Nav2RobotAdapter(RobotAdapter):
             destination.position[2],
             self.exec_handle
         )
+    
+    def _set_ros_controller_params(
+        self,
+        param_name: str,
+        param_value: float | int | str
+    ) -> bool:
+        """
+        Set a ROS controller parameter for the robot.
+        """
+        if self.zenoh_session is None:
+            self.node.get_logger().error(
+                'Zenoh session is not initialized, cannot set ROS controller '
+                f'parameter [{param_name}] with value [{param_value}]'
+            )
+            return False
+
+        param = RclInterfaces_Parameter(
+            name=param_name,
+            value=RclInterfaces_ParameterValue(
+                type=RclInterfaces_ParameterValue.Type.from_value(
+                    type(param_value).__name__
+                ),
+                integer_value=int(param_value) if isinstance(param_value, int) else 0,
+                double_value=float(param_value) if isinstance(param_value, float) else 0.0,
+                string_value=str(param_value) if isinstance(param_value, str) else ''
+            )
+        )
+
+        req = SetParameters_Request(parameters=[param])
+        replies = self.zenoh_session.get(
+            namespacify('controller_server/set_parameters', self.name),
+            payload=req.serialize(),
+            # timeout=0.5
+        )
+
+        for reply in replies:
+            try:
+                rep = SetParameters_Response.deserialize(reply.ok.payload.to_bytes())
+                if rep.results[0].success:
+                    self.node.get_logger().info(
+                        f'Successfully set parameter [{param_name}] to '
+                        f'[{param_value}] for robot [{self.name}]'
+                    )
+                    return True
+                else:
+                    self.node.get_logger().error(
+                        f'Failed to set parameter [{param_name}] to '
+                        f'[{param_value}] for robot [{self.name}]: '
+                        f'{rep.results[0].reason}'
+                    )
+                    return False
+            except Exception as e:
+                self.node.get_logger().error(
+                    f'Failed to deserialize SetParameters_Response: {type(e)}: {e}'
+                )
+                continue
+
+        return False
 
     def _request_stop(self, exec_handle: ExecutionHandle):
         if exec_handle is not None:
@@ -622,6 +690,7 @@ class Nav2RobotAdapter(RobotAdapter):
   
             if self.exec_handle == exec_handle and exec_handle.execution:
                 if is_done:
+                    self.dest_name = None
                     self.node.get_logger().info(
                         f'Navigation for robot [{self.name}] with goal_id '
                         f'{goal_id} is done.'
@@ -690,7 +759,7 @@ class Nav2RobotAdapter(RobotAdapter):
                         robot_action=robot_action
                     )
                 case 'set_dest':
-                    self.dest_name = description
+                    self.dest_name = description['dest']
             return
 
         # TODO(ac): change map using map_server load_map, and set initial
