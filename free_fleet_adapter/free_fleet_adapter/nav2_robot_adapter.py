@@ -584,7 +584,7 @@ class Nav2RobotAdapter(RobotAdapter):
                 integer_value=int(param_value) if isinstance(param_value, int) else 0,
                 double_value=float(param_value) if isinstance(param_value, float) else 0.0,
                 string_value=str(param_value) if isinstance(param_value, str) else '',
-                bool_value=bool(param_value) if isinstance(param_value, bool) else False
+                bool_value=bool(param_value) if isinstance(param_value, bool) else False,
                 byte_array_value=b'',
                 boolean_array_value=[],
                 integer_array_value=[],
