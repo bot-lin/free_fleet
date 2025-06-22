@@ -603,7 +603,7 @@ class Nav2RobotAdapter(RobotAdapter):
         for reply in replies:
             try:
                 rep = SetParameters_Response.deserialize(reply.ok.payload.to_bytes())
-                if rep.results[0].success:
+                if rep.results[0].successful:
                     self.node.get_logger().info(
                         f'Successfully set parameter [{param_name}] to '
                         f'[{param_value}] for robot [{self.name}]'
