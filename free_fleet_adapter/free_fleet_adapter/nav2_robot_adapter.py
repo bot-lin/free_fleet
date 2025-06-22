@@ -564,7 +564,6 @@ class Nav2RobotAdapter(RobotAdapter):
                     'goal_checker.yaw_goal_tolerance': 6.1,
                 }
             )
-            self.dest_name = destination.name
         self._handle_navigate_through_poses(
             destination.map,
             destination.position[0],
