@@ -690,7 +690,6 @@ class Nav2RobotAdapter(RobotAdapter):
   
             if self.exec_handle == exec_handle and exec_handle.execution:
                 if is_done:
-                    self.dest_name = None
                     self.node.get_logger().info(
                         f'Navigation for robot [{self.name}] with goal_id '
                         f'{goal_id} is done.'
