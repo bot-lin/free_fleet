@@ -550,9 +550,21 @@ class Nav2RobotAdapter(RobotAdapter):
             self.exec_handle = ExecutionHandle(execution)
         if self.dest_name == destination.name:
             self._set_ros_controller_params(
-                'goal_checker.xy_goal_tolerance',
-                0.05
+                {
+                    'goal_checker.xy_goal_tolerance': 0.05,
+                    'goal_checker.yaw_goal_tolerance': 0.05,
+
+                }
+
             )
+        else:
+            self._set_ros_controller_params(
+                {
+                    'goal_checker.xy_goal_tolerance': 0.3,
+                    'goal_checker.yaw_goal_tolerance': 6.1,
+                }
+            )
+            self.dest_name = destination.name
         self._handle_navigate_through_poses(
             destination.map,
             destination.position[0],
@@ -564,8 +576,7 @@ class Nav2RobotAdapter(RobotAdapter):
     
     def _set_ros_controller_params(
         self,
-        param_name: str,
-        param_value: float | int | str
+        parameters: dict
     ) -> bool:
         """
         Set a ROS controller parameter for the robot.
@@ -573,27 +584,29 @@ class Nav2RobotAdapter(RobotAdapter):
         if self.zenoh_session is None:
             self.node.get_logger().error(
                 'Zenoh session is not initialized, cannot set ROS controller '
-                f'parameter [{param_name}] with value [{param_value}]'
+                f'parameter [{parameters}] for robot [{self.name}]'
             )
             return False
-
-        param = RclInterfaces_Parameter(
-            name=param_name,
-            value=RclInterfaces_ParameterValue(
-                type=3,
-                integer_value=int(param_value) if isinstance(param_value, int) else 0,
-                double_value=float(param_value) if isinstance(param_value, float) else 0.0,
-                string_value=str(param_value) if isinstance(param_value, str) else '',
-                bool_value=bool(param_value) if isinstance(param_value, bool) else False,
-                byte_array_value=b'',
-                boolean_array_value=[],
-                integer_array_value=[],
-                double_array_value=[],
-                string_array_value=[]
+        param_ros = []
+        for param_name, param_value in parameters.items():
+            param = RclInterfaces_Parameter(
+                name=param_name,
+                value=RclInterfaces_ParameterValue(
+                    type=3,
+                    integer_value=int(param_value) if isinstance(param_value, int) else 0,
+                    double_value=float(param_value) if isinstance(param_value, float) else 0.0,
+                    string_value=str(param_value) if isinstance(param_value, str) else '',
+                    bool_value=bool(param_value) if isinstance(param_value, bool) else False,
+                    byte_array_value=b'',
+                    boolean_array_value=[],
+                    integer_array_value=[],
+                    double_array_value=[],
+                    string_array_value=[]
+                )
             )
-        )
+            param_ros.append(param)
 
-        req = SetParameters_Request(parameters=[param])
+        req = SetParameters_Request(parameters=param_ros)
         replies = self.zenoh_session.get(
             namespacify('controller_server/set_parameters', self.name),
             payload=req.serialize(),
