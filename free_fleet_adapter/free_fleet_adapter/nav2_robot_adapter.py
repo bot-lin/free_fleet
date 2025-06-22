@@ -557,6 +557,7 @@ class Nav2RobotAdapter(RobotAdapter):
                 }
 
             )
+            bt_file = '/data/behavior_trees/zc_nav_precise_rmf.xml'
         else:
             self._set_ros_controller_params(
                 {
@@ -564,13 +565,15 @@ class Nav2RobotAdapter(RobotAdapter):
                     'goal_checker.yaw_goal_tolerance': 6.1,
                 }
             )
+            bt_file = '/data/behavior_trees/zc_nav_rmf.xml'
         self._handle_navigate_through_poses(
             destination.map,
             destination.position[0],
             destination.position[1],
             0.0,
             destination.position[2],
-            self.exec_handle
+            self.exec_handle,
+            bt_file = bt_file
         )
     
     def _set_ros_controller_params(
