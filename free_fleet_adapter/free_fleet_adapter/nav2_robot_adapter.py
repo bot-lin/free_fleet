@@ -580,9 +580,7 @@ class Nav2RobotAdapter(RobotAdapter):
         param = RclInterfaces_Parameter(
             name=param_name,
             value=RclInterfaces_ParameterValue(
-                type=RclInterfaces_ParameterValue.Type.from_value(
-                    type(param_value).__name__
-                ),
+                type=3,
                 integer_value=int(param_value) if isinstance(param_value, int) else 0,
                 double_value=float(param_value) if isinstance(param_value, float) else 0.0,
                 string_value=str(param_value) if isinstance(param_value, str) else ''
