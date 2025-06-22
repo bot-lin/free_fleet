@@ -549,22 +549,22 @@ class Nav2RobotAdapter(RobotAdapter):
         with self.adapter_mutex:
             self.exec_handle = ExecutionHandle(execution)
         if self.dest_name == destination.name:
-            self._set_ros_controller_params(
-                {
-                    'goal_checker.xy_goal_tolerance': 0.05,
-                    'goal_checker.yaw_goal_tolerance': 0.05,
+            # self._set_ros_controller_params(
+            #     {
+            #         'goal_checker.xy_goal_tolerance': 0.05,
+            #         'goal_checker.yaw_goal_tolerance': 0.05,
 
-                }
+            #     }
 
-            )
+            # )
             bt_file = '/data/behavior_trees/zc_nav_precise_rmf.xml'
         else:
-            self._set_ros_controller_params(
-                {
-                    'goal_checker.xy_goal_tolerance': 0.3,
-                    'goal_checker.yaw_goal_tolerance': 6.1,
-                }
-            )
+            # self._set_ros_controller_params(
+            #     {
+            #         'goal_checker.xy_goal_tolerance': 0.3,
+            #         'goal_checker.yaw_goal_tolerance': 6.1,
+            #     }
+            # )
             bt_file = '/data/behavior_trees/zc_nav_rmf.xml'
         self._handle_navigate_through_poses(
             destination.map,
