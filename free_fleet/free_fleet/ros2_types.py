@@ -231,15 +231,15 @@ class SensorMsgs_BatteryState(IdlStruct):
 @dataclass
 class RclInterfaces_ParameterValue(IdlStruct):
     type: uint8
-    bool_value: bool = False
-    integer_value: int64 = 0
-    double_value: float64 = 0.0
-    string_value: str = ''
-    byte_array_value: List[uint8] = []
-    boolean_array_value: List[bool] = []
-    integer_array_value: List[int64] = []
-    double_array_value: List[float64] = []
-    string_array_value: List[str] = []
+    bool_value: bool
+    integer_value: int64
+    double_value: float64
+    string_value: str
+    byte_array_value: List[uint8]
+    boolean_array_value: List[bool]
+    integer_array_value: List[int64]
+    double_array_value: List[float64]
+    string_array_value: List[str]
 @dataclass
 class RclInterfaces_Parameter(IdlStruct):
     name: str
