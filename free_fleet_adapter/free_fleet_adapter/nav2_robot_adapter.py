@@ -664,6 +664,12 @@ class Nav2RobotAdapter(RobotAdapter):
                     break
 
         if action_factory:
+            self.node.get_logger().info(
+                f'Robot [{self.name}] is executing action [{category}] with '
+                f'description [{description}] '
+                f'using action plugin [{plugin_name}] '
+                f'with action factory [{action_factory}]'
+            )
             # Valid action-plugin pair exists, create RobotAction
             robot_action = action_factory.perform_action(
                 category, description, execution
