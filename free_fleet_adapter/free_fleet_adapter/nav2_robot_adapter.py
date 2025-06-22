@@ -127,6 +127,7 @@ class Nav2RobotAdapter(RobotAdapter):
         self.zenoh_session = zenoh_session
         self.fleet_config = fleet_config
         self.tf_buffer = tf_buffer
+        self.dest_name = None
 
         self.exec_handle: ExecutionHandle | None = None
         self.map_name = self.robot_config_yaml['initial_map']
@@ -538,6 +539,7 @@ class Nav2RobotAdapter(RobotAdapter):
             f'on map [{destination.map}] '
             f'named {destination.name} '
             f'graph_index: {destination.graph_index}. '
+            f'final destination name: {self.dest_name} '
         )
         with self.adapter_mutex:
             self.exec_handle = ExecutionHandle(execution)
@@ -674,18 +676,21 @@ class Nav2RobotAdapter(RobotAdapter):
             robot_action = action_factory.perform_action(
                 category, description, execution
             )
-
-            self.exec_handle = ExecutionHandle(execution)
-            self._handle_navigate_through_poses(
-                None,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                self.exec_handle,
-                bt_file='/data/actions/reflector_docking.xml',
-                robot_action=robot_action
-            )
+            match category:
+                case 'docking':
+                    self.exec_handle = ExecutionHandle(execution)
+                    self._handle_navigate_through_poses(
+                        None,
+                        0.0,
+                        0.0,
+                        0.0,
+                        0.0,
+                        self.exec_handle,
+                        bt_file='/data/actions/reflector_docking.xml',
+                        robot_action=robot_action
+                    )
+                case 'set_dest':
+                    self.dest_name = description
             return
 
         # TODO(ac): change map using map_server load_map, and set initial

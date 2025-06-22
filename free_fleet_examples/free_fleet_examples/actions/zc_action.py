@@ -31,6 +31,7 @@ class ActionFactory(RobotActionFactory):
         RobotActionFactory.__init__(self, context)
         self.supported_actions = [
             'docking',
+            'set_dest'
         ]
 
     def supports_action(self, category: str) -> bool:
@@ -49,6 +50,8 @@ class ActionFactory(RobotActionFactory):
         match category:
             case 'docking':
                 return Docking(description, execution, self.context)
+            case 'set_dest':
+                return SetDestination(description, execution, self.context)
 
 
 # The hello_world custom action parses the description for a user name,
@@ -93,13 +96,27 @@ class HelloWorld(RobotAction):
         self.state = RobotActionState.COMPLETED
         return self.state
 
+class SetDestination(RobotAction):
+    def __init__(
+        self,
+        description: dict,
+        execution,
+        context: RobotActionContext
+    ):
+        RobotAction.__init__(self, context, execution)
 
-# The delayed_hello_world custom action parses the description for a user
-# name and duration for waiting, performs logging only after the specified
-# duration has elapsed, and allows users to cancel the action via a custom
-# Empty topic with topic name `cancel_delayed_hello_world`.
-# Cancel the action with the following command
-# ros2 topic pub --once  /cancel_delayed_hello_world std_msgs/msg/Empty "{}"
+        self.context.node.get_logger().info(
+            f'New SetDestination requested for robot [{self.context.robot_name}]'
+        )
+        self.description = description
+        self.user = None
+
+        # Enum used for tracking whether this action has been completed
+        self.state = RobotActionState.IN_PROGRESS
+
+    def update_action(self) -> RobotActionState:
+        pass
+    
 class Docking(RobotAction):
 
     def __init__(
