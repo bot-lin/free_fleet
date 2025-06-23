@@ -15,6 +15,7 @@
 # limitations under the License.
 import importlib
 from typing import Annotated
+import math
 
 from free_fleet.convert import transform_stamped_to_ros2_msg
 from free_fleet.ros2_types import (
@@ -591,7 +592,7 @@ class Nav2RobotAdapter(RobotAdapter):
         )
 
     def _get_yaw_from_ros(self):
-        return self.waypoints[self.map_name][self.dest_name][2]
+        return math.radians(self.waypoints[self.map_name][self.dest_name][2])
     
     def _set_ros_controller_params(
         self,
