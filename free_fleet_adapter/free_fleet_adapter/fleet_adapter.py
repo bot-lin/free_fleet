@@ -143,6 +143,20 @@ def start_fleet_adapter(
             for action in plugin_actions:
                 fleet_handle.more().add_performable_action(action, _accept_action)
 
+    wps = {}
+    with open('/data/maps/zc/wps.yaml', 'r') as f:
+        wps_yaml = yaml.safe_load(f)
+        levels = wps_yaml.get('levels', {})
+        for level, value in levels.items():
+            
+            level_wps = {}
+            for v in value['vertices']:
+                if len(v[3]) > 0:
+                    yaw = v[-1] if isinstance(v[-1], float) else 0.0
+                    level_wps[v[3]] = [v[0], v[1], yaw]
+            wps[level] = level_wps
+            
+
     robots = {}
     for robot_name in fleet_config.known_robots:
         robot_config_yaml = config_yaml['rmf_fleet']['robots'][robot_name]
@@ -165,7 +179,8 @@ def start_fleet_adapter(
                 zenoh_session,
                 fleet_handle,
                 fleet_config,
-                tf_buffer
+                tf_buffer,
+                wps
             )
         elif nav_stack == 1:
             robots[robot_name] = Nav1RobotAdapter(

@@ -123,7 +123,8 @@ class Nav2RobotAdapter(RobotAdapter):
         zenoh_session,
         fleet_handle,
         fleet_config: rmf_easy.FleetConfiguration | None,
-        tf_buffer
+        tf_buffer,
+        wps
     ):
         RobotAdapter.__init__(self, name, node, fleet_handle)
 
@@ -133,6 +134,7 @@ class Nav2RobotAdapter(RobotAdapter):
         self.fleet_config = fleet_config
         self.tf_buffer = tf_buffer
         self.dest_name = None
+        self.waypoints = wps
 
         self.exec_handle: ExecutionHandle | None = None
         self.map_name = self.robot_config_yaml['initial_map']
@@ -558,6 +560,7 @@ class Nav2RobotAdapter(RobotAdapter):
         )
         with self.adapter_mutex:
             self.exec_handle = ExecutionHandle(execution)
+        yaw = destination.position[2]
         if self.dest_name == destination.name:
             self._set_ros_controller_params(
                 {
@@ -568,6 +571,7 @@ class Nav2RobotAdapter(RobotAdapter):
 
             )
             bt_file = '/data/behavior_trees/zc_nav_precise_rmf.xml'
+            yaw = self._get_yaw_from_ros()
         else:
             self._set_ros_controller_params(
                 {
@@ -581,10 +585,13 @@ class Nav2RobotAdapter(RobotAdapter):
             destination.position[0],
             destination.position[1],
             0.0,
-            destination.position[2],
+            yaw,
             self.exec_handle,
             bt_file = bt_file
         )
+
+    def _get_yaw_from_ros(self):
+        return self.waypoints[self.map_name][self.dest_name][2]
     
     def _set_ros_controller_params(
         self,
