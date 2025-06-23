@@ -140,6 +140,16 @@ class Nav2RobotAdapter(RobotAdapter):
         default_robot_frame = 'base_footprint'
         self.map_frame = self.robot_config_yaml.get('map_frame', default_map_frame)
         self.robot_frame = self.robot_config_yaml.get('robot_frame', default_robot_frame)
+        self.nav_precision = {
+            "dest": {
+                "xy": self.robot_config_yaml['nav_precision']['dest']['xy'],
+                "yaw": self.robot_config_yaml['nav_precision']['dest']['yaw'],
+            },
+            "passthrough": {
+                "xy": self.robot_config_yaml['nav_precision']['passthrough']['xy'],
+                "yaw": self.robot_config_yaml['nav_precision']['passthrough']['yaw'],
+            }
+        }
 
         # TODO(ac): Only use full battery if sim is indicated
         self.battery_soc = 1.0
@@ -549,22 +559,22 @@ class Nav2RobotAdapter(RobotAdapter):
         with self.adapter_mutex:
             self.exec_handle = ExecutionHandle(execution)
         if self.dest_name == destination.name:
-            # self._set_ros_controller_params(
-            #     {
-            #         'goal_checker.xy_goal_tolerance': 0.05,
-            #         'goal_checker.yaw_goal_tolerance': 0.05,
+            self._set_ros_controller_params(
+                {
+                    'goal_checker.xy_goal_tolerance': self.nav_precision['dest']['xy'],
+                    'goal_checker.yaw_goal_tolerance': self.nav_precision['dest']['yaw'],
 
-            #     }
+                }
 
-            # )
+            )
             bt_file = '/data/behavior_trees/zc_nav_precise_rmf.xml'
         else:
-            # self._set_ros_controller_params(
-            #     {
-            #         'goal_checker.xy_goal_tolerance': 0.3,
-            #         'goal_checker.yaw_goal_tolerance': 6.1,
-            #     }
-            # )
+            self._set_ros_controller_params(
+                {
+                    'goal_checker.xy_goal_tolerance': self.nav_precision['passthrough']['xy'],
+                    'goal_checker.yaw_goal_tolerance': self.nav_precision['passthrough']['yaw'],
+                }
+            )
             bt_file = '/data/behavior_trees/zc_nav_rmf.xml'
         self._handle_navigate_through_poses(
             destination.map,
