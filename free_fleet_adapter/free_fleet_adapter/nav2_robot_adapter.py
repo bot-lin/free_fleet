@@ -659,7 +659,7 @@ class Nav2RobotAdapter(RobotAdapter):
         map_url = '/data/maps/mask/' + map_name + '.yaml'
         value = LoadMap_Request(map_url=map_url)
         replies = self.zenoh_session.get(
-            namespacify('filter_mask_server/load_mask', self.name),
+            namespacify('filter_mask_server/load_map', self.name),
             payload=value.serialize(),
             # timeout=0.5
         )
