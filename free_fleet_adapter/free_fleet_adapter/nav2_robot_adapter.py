@@ -34,6 +34,7 @@ from free_fleet.ros2_types import (
     RclInterfaces_ParameterValue,
     RclInterfaces_Parameter,
     SetParameters_Request,
+    LoadMap_Request,
     RclInterfaces_SetParametersResult,
     SetParameters_Response,
     TFMessage,
@@ -460,22 +461,33 @@ class Nav2RobotAdapter(RobotAdapter):
             # If map_name is None, use the current map name
             map_name = self.map_name
         if map_name != self.map_name:
-            # TODO(ac): test this map related replanning behavior
-            self.replan_counts += 1
-            self.node.get_logger().error(
-                f'Destination is on map [{map_name}], while robot '
-                f'[{self.name}] is on map [{self.map_name}], replan count '
-                f'[{self.replan_counts}]'
-            )
-
-            if self.update_handle is None:
+            # change map using map_server load_map, and set initial
+            if self._load_map(map_name):
+                self.node.get_logger().info(
+                    f'Robot [{self.name}] changed map to [{map_name}]'
+                )
+                self.map_name = map_name
+            else:
                 error_message = \
-                    f'Failed to replan for robot {self.name}, robot adapter ' \
-                    'has not yet been initialized with a fleet update handle.'
+                    f'Failed to load map [{map_name}] for robot [{self.name}]'
                 self.node.get_logger().error(error_message)
-                return
-            self.update_handle.more().replan()
-            return
+                raise RuntimeError(error_message)
+            # # TODO(ac): test this map related replanning behavior
+            # self.replan_counts += 1
+            # self.node.get_logger().error(
+            #     f'Destination is on map [{map_name}], while robot '
+            #     f'[{self.name}] is on map [{self.map_name}], replan count '
+            #     f'[{self.replan_counts}]'
+            # )
+
+            # if self.update_handle is None:
+            #     error_message = \
+            #         f'Failed to replan for robot {self.name}, robot adapter ' \
+            #         'has not yet been initialized with a fleet update handle.'
+            #     self.node.get_logger().error(error_message)
+            #     return
+            # self.update_handle.more().replan()
+            # return
 
         time_now = self.node.get_clock().now().seconds_nanoseconds()
         stamp = Time(sec=time_now[0], nanosec=time_now[1])
@@ -632,30 +644,27 @@ class Nav2RobotAdapter(RobotAdapter):
             payload=req.serialize(),
             # timeout=0.5
         )
-
-        for reply in replies:
-            try:
-                rep = SetParameters_Response.deserialize(reply.ok.payload.to_bytes())
-                if rep.results[0].successful:
-                    self.node.get_logger().info(
-                        f'Successfully set parameter [{param_name}] to '
-                        f'[{param_value}] for robot [{self.name}]'
-                    )
-                    return True
-                else:
-                    self.node.get_logger().error(
-                        f'Failed to set parameter [{param_name}] to '
-                        f'[{param_value}] for robot [{self.name}]: '
-                        f'{rep.results[0].reason}'
-                    )
-                    return False
-            except Exception as e:
-                self.node.get_logger().error(
-                    f'Failed to deserialize SetParameters_Response: {type(e)}: {e}'
-                )
-                continue
-
-        return False
+    
+    def _load_map(
+        self,
+        map_name: str,
+    ):
+        map_url = '/data/maps/' + map_name + '.yaml'
+        value = LoadMap_Request(map_url=map_url)
+        replies = self.zenoh_session.get(
+            namespacify('map_server/load_map', self.name),
+            payload=value.serialize(),
+            # timeout=0.5
+        )
+        map_url = '/data/maps/mask/' + map_name + '.yaml'
+        value = LoadMap_Request(map_url=map_url)
+        replies = self.zenoh_session.get(
+            namespacify('filter_mask_server/load_mask', self.name),
+            payload=value.serialize(),
+            # timeout=0.5
+        )
+        return True
+        
 
     def _request_stop(self, exec_handle: ExecutionHandle):
         if exec_handle is not None:

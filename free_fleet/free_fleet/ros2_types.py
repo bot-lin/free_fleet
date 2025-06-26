@@ -255,3 +255,8 @@ class RclInterfaces_SetParametersResult(IdlStruct):
 @dataclass
 class SetParameters_Response(IdlStruct):
     results: List[RclInterfaces_SetParametersResult]
+
+
+@dataclass
+class LoadMap_Request(IdlStruct):
+    map_url: str
