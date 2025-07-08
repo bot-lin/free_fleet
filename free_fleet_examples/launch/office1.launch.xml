@@ -15,5 +15,9 @@
         args="-c /data/params/door_config.yaml"
         output="both">
   </node>
+          <node pkg="zc_lift_controller"
+        exec="zc_lift_client"
+        output="both">
+  </node>
   </group>
 </launch>
