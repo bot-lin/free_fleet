@@ -1,4 +1,4 @@
-FROM ros:jazzy
+FROM osrf/ros:jazzy-desktop-full
 
 # 设置非交互式前端，防止安装过程卡住
 ENV DEBIAN_FRONTEND=noninteractive
