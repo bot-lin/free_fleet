@@ -10,8 +10,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 
 # 初始化 rosdep 并配置 colcon mixin
-RUN rosdep init || echo "rosdep already initialized" && \
-    rosdep update && \
+RUN rosdep update && \
     colcon mixin add default https://raw.githubusercontent.com/colcon/colcon-mixin-repository/master/index.yaml && \
     colcon mixin update default
 
