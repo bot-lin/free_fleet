@@ -169,7 +169,7 @@ class Nav2RobotAdapter(RobotAdapter):
             self.battery_soc = battery_state.percentage
 
         self.battery_state_sub = self.zenoh_session.declare_subscriber(
-            namespacify('battery_state', name),
+            namespacify('battery/state', name),
             _battery_state_callback
         )
 
