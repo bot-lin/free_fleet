@@ -525,7 +525,9 @@ class Nav2RobotAdapter(RobotAdapter):
         req = NavigateThroughPoses_SendGoal_Request(
             goal_id=nav_goal_id,
             poses=[pose_stamped],
-            behavior_tree='/data/behavior_trees/zc_nav.xml'
+            behavior_tree='/data/behavior_trees/zc_nav.xml',
+            planner_id='GridBased',
+            controller_id='FollowPath'
         )
 
         replies = self.zenoh_session.get(
