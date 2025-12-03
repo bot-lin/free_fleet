@@ -80,7 +80,11 @@ class NavigateToPose_SendGoal_Request(IdlStruct):
     pose: GeometryMsgs_PoseStamped
     behavior_tree: str
 
-
+@dataclass
+class NavigateThroughPoses_SendGoal_Request(IdlStruct):
+    goal_id: pycdr2.types.array[pycdr2.types.uint8, 16]
+    poses: pycdr2.types.sequence[GeometryMsgs_PoseStamped]
+    behavior_tree: str
 # https://github.com/ros-navigation/navigation2/blob/main/nav2_msgs/action/NavigateToPose.action
 @dataclass
 class NavigateToPose_SendGoal_Response(IdlStruct):
