@@ -5,7 +5,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # 替换 ROS 2 源为清华源 (针对中国大陆用户优化网络连接)
 # 这一步是为了解决 packages.ros.org 连接超时或被重置的问题
-RUN sed -i 's#http://packages.ros.org/ros2/ubuntu#https://mirrors.tuna.tsinghua.edu.cn/ros2/ubuntu#g' /etc/apt/sources.list.d/ros2.list || true
+# RUN sed -i 's#http://packages.ros.org/ros2/ubuntu#https://mirrors.tuna.tsinghua.edu.cn/ros2/ubuntu#g' /etc/apt/sources.list.d/ros2.list || true
 
 
 
