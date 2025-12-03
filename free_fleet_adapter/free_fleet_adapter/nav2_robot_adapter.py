@@ -31,6 +31,11 @@ from free_fleet.ros2_types import (
     NavigateToPose_GetResult_Response,
     NavigateToPose_SendGoal_Request,
     NavigateToPose_SendGoal_Response,
+    NavigateThroughPoses_Feedback,
+    NavigateThroughPoses_GetResult_Request,
+    NavigateThroughPoses_GetResult_Response,
+    NavigateThroughPoses_SendGoal_Request,
+    NavigateThroughPoses_SendGoal_Response,
     SensorMsgs_BatteryState,
     TFMessage,
     Time,
@@ -182,14 +187,14 @@ class Nav2RobotAdapter(RobotAdapter):
             if self.exec_handle.goal_id is None:
                 return
 
-            feedback = NavigateToPose_Feedback.deserialize(
+            feedback = NavigateThroughPoses_Feedback.deserialize(
                 sample.payload.to_bytes())
             self.exec_handle.last_received_feedback = ExecutionFeedback(
                 feedback,
                 self.node.get_clock().now().seconds_nanoseconds()[0])
 
         self.feedback_callback_sub = self.zenoh_session.declare_subscriber(
-            namespacify('navigate_to_pose/_action/feedback', name),
+            namespacify('navigate_through_poses/_action/feedback', name),
             _feedback_callback)
 
         # Initialize robot
@@ -353,17 +358,17 @@ class Nav2RobotAdapter(RobotAdapter):
             if estimated_completion_sec > self.node.get_clock().now().seconds_nanoseconds()[0]:
                 return False
 
-        req = NavigateToPose_GetResult_Request(goal_id=nav_handle.goal_id)
+        req = NavigateThroughPoses_GetResult_Request(goal_id=nav_handle.goal_id)
         # TODO(ac): parameterize the service call timeout
         replies = self.zenoh_session.get(
-            namespacify('navigate_to_pose/_action/get_result', self.name),
+            namespacify('navigate_through_poses/_action/get_result', self.name),
             payload=req.serialize(),
             timeout=self.service_call_timeout_sec
         )
         for reply in replies:
             try:
                 # Deserialize the response
-                rep = NavigateToPose_GetResult_Response.deserialize(
+                rep = NavigateThroughPoses_GetResult_Response.deserialize(
                     reply.ok.payload.to_bytes()
                 )
                 self.node.get_logger().debug(f'Result: {rep.status}')
@@ -474,7 +479,7 @@ class Nav2RobotAdapter(RobotAdapter):
 
         self.update_handle.update(state, activity_identifier)
 
-    def _handle_navigate_to_pose(
+    def _handle_navigate_through_poses(
         self,
         map_name: str,
         x: float,
@@ -517,21 +522,21 @@ class Nav2RobotAdapter(RobotAdapter):
 
         nav_goal_id = \
             np.random.randint(0, 255, size=(16)).astype('uint8').tolist()
-        req = NavigateToPose_SendGoal_Request(
+        req = NavigateThroughPoses_SendGoal_Request(
             goal_id=nav_goal_id,
-            pose=pose_stamped,
-            behavior_tree='/data/behavior_trees/zc_nav_rmf.xml'
+            poses=[pose_stamped],
+            behavior_tree='/data/behavior_trees/zc_nav.xml'
         )
 
         replies = self.zenoh_session.get(
-            namespacify('navigate_to_pose/_action/send_goal', self.name),
+            namespacify('navigate_through_poses/_action/send_goal', self.name),
             payload=req.serialize(),
             timeout=self.service_call_timeout_sec
         )
 
         for reply in replies:
             try:
-                rep = NavigateToPose_SendGoal_Response.deserialize(
+                rep = NavigateThroughPoses_SendGoal_Response.deserialize(
                     reply.ok.payload.to_bytes())
                 if rep.accepted:
                     self.node.get_logger().info(
@@ -572,7 +577,7 @@ class Nav2RobotAdapter(RobotAdapter):
             f'on map [{destination.map}]'
         )
         self.exec_handle = ExecutionHandle(execution)
-        self._handle_navigate_to_pose(
+        self._handle_navigate_through_poses(
             destination.map,
             destination.position[0],
             destination.position[1],
@@ -591,7 +596,7 @@ class Nav2RobotAdapter(RobotAdapter):
         req = make_nav2_cancel_all_goals_request()
         replies = self.zenoh_session.get(
             namespacify(
-                'navigate_to_pose/_action/cancel_goal',
+                'navigate_through_poses/_action/cancel_goal',
                 self.name,
             ),
             payload=req.serialize(),

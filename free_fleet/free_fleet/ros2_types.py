@@ -91,10 +91,18 @@ class NavigateToPose_SendGoal_Response(IdlStruct):
     accepted: bool
     stamp: Time
 
+@dataclass
+class NavigateThroughPoses_SendGoal_Response(IdlStruct):
+    accepted: bool
+    stamp: Time
 
 # https://design.ros2.org/articles/actions.html#get-result-service
 @dataclass
 class NavigateToPose_GetResult_Request(IdlStruct):
+    goal_id: pycdr2.types.array[pycdr2.types.uint8, 16]
+
+@dataclass
+class NavigateThroughPoses_GetResult_Request(IdlStruct):
     goal_id: pycdr2.types.array[pycdr2.types.uint8, 16]
 
 
@@ -115,6 +123,9 @@ class GoalStatus(Enum):
 class NavigateToPose_GetResult_Response(IdlStruct):
     status: pycdr2.types.int8
 
+@dataclass
+class NavigateThroughPoses_GetResult_Response(IdlStruct):
+    status: pycdr2.types.int8
 
 # https://github.com/ros-navigation/navigation2/blob/main/nav2_msgs/action/NavigateToPose.action
 @dataclass
@@ -126,6 +137,14 @@ class NavigateToPose_Feedback(IdlStruct):
     number_of_recoveries: pycdr2.types.int16
     distance_remaining: pycdr2.types.float32
 
+@dataclass
+class NavigateThroughPoses_Feedback(IdlStruct):
+    goal_id: pycdr2.types.array[pycdr2.types.uint8, 16]
+    current_pose: GeometryMsgs_PoseStamped
+    navigation_time: Duration
+    estimated_time_remaining: Duration
+    number_of_recoveries: pycdr2.types.int16
+    distance_remaining: pycdr2.types.float32
 
 # https://github.com/ros2/common_interfaces/blob/rolling/geometry_msgs/msg/Vector3.msg
 @dataclass
