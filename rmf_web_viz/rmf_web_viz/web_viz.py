@@ -111,13 +111,9 @@ class RmfWebVizNode(Node):
                     'x': image.x_offset,
                     'y': image.y_offset,
                     'scale': image.scale, 
-                    'width': image.width,
-                    'height': image.height,
-                    # Note: Image data itself (byte array) might be heavy to send repeatedly
-                    # Ideally, serve it as a static file or blob on demand.
-                    # For simplicity, we might skip sending raw data here and assume client requests it
-                    # OR encode minimal info.
-                    # RMF usually provides URLs or raw data. If raw data, we need to handle it.
+                    # 'width': image.width, # AffineImage does not have width/height
+                    # 'height': image.height,
+                    'encoding': image.encoding,
                     'data_len': len(image.data)
                 })
             
