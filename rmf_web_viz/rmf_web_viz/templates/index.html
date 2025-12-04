@@ -46,6 +46,7 @@
         let offsetX = 400;
         let offsetY = 300;
         let levelImages = {}; // Cache for loaded P5 images: { levelName: [p5Image, ...] }
+        let scheduleMarkers = {}; // Cache for markers { ns: { id: markerData } }
 
         // SocketIO Events
         socket.on('connect', () => {
@@ -119,6 +120,10 @@
         socket.on('fleet_update', (data) => {
             fleetStates[data.name] = data;
             updateFleetSidebar();
+        });
+
+        socket.on('schedule_markers_update', (data) => {
+            scheduleMarkers = data;
         });
 
         function updateLevelSelect() {
@@ -201,7 +206,52 @@
                 }
             }
 
+            drawSchedule();
             drawRobots();
+        }
+
+        function drawSchedule() {
+            // Draw markers
+            // We assume schedule markers are relevant for current level or global.
+            // RMF schedule markers usually are z=0 but might not have level info directly in marker msg
+            // unless we map z-height to levels. 
+            // For simplicity, we draw them all or check if they are within bounding box of level?
+            // Usually schedule markers are 2D on map frame.
+            
+            for (const ns in scheduleMarkers) {
+                for (const mid in scheduleMarkers[ns]) {
+                    const m = scheduleMarkers[ns][mid];
+                    
+                    // Check lifetime (optional, simple check)
+                    // if (m.lifetime > 0 && (Date.now()/1000 - m.timestamp) > m.lifetime) continue;
+
+                    push();
+                    
+                    if (m.type === 4) { // LINE_STRIP
+                        noFill();
+                        stroke(m.color.r * 255, m.color.g * 255, m.color.b * 255, m.color.a * 255);
+                        strokeWeight(Math.max(m.scale.x * 20, 2) / mapScale); // scale.x is line width in meters usually
+                        
+                        beginShape();
+                        for (const p of m.points) {
+                            // Coordinate transform: x, -y
+                            vertex(p.x, -p.y);
+                        }
+                        endShape();
+                    } else if (m.type === 3) { // CYLINDER
+                        // Draw at pose
+                        translate(m.pose.x, -m.pose.y);
+                        
+                        fill(m.color.r * 255, m.color.g * 255, m.color.b * 255, m.color.a * 255);
+                        noStroke();
+                        // Cylinder in 2D is a circle
+                        // scale.x and scale.y are diameter
+                        ellipse(0, 0, m.scale.x, m.scale.y);
+                    }
+                    
+                    pop();
+                }
+            }
         }
 
         function drawLevel(level) {

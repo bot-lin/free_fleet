@@ -5,6 +5,7 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPo
 from rmf_fleet_msgs.msg import FleetState
 from rmf_building_map_msgs.msg import BuildingMap
 from rmf_site_map_msgs.msg import SiteMap
+from visualization_msgs.msg import MarkerArray, Marker
 import threading
 import flask
 from flask import Flask, render_template
@@ -12,6 +13,7 @@ from flask_socketio import SocketIO
 import json
 import os
 import base64
+import time
 
 # Initialize Flask and SocketIO
 # Use absolute paths for templates/static based on this file's location
@@ -25,6 +27,8 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 # Global storage for latest states
 latest_fleet_states = {}
 latest_building_map = None
+# Schedule markers cache: { ns: { id: marker_data } }
+schedule_markers_cache = {}
 
 class RmfWebVizNode(Node):
     def __init__(self):
@@ -53,6 +57,14 @@ class RmfWebVizNode(Node):
             '/map',
             self.building_map_callback,
             qos_profile=map_qos
+        )
+
+        # Subscribe to schedule markers
+        self.create_subscription(
+            MarkerArray,
+            '/schedule_markers',
+            self.schedule_markers_callback,
+            10
         )
 
         self.get_logger().info('RMF Web Viz Node Started')
@@ -172,6 +184,62 @@ class RmfWebVizNode(Node):
             
         latest_building_map = map_data
         socketio.emit('map_update', map_data)
+
+    def schedule_markers_callback(self, msg):
+        global schedule_markers_cache
+        
+        # Process markers
+        # Action: 0=ADD/MODIFY, 1=DEPRECATED, 2=DELETE, 3=DELETEALL
+        
+        for marker in msg.markers:
+            ns = marker.ns
+            mid = marker.id
+            
+            if marker.action == Marker.DELETEALL:
+                schedule_markers_cache = {}
+                continue
+                
+            if marker.action == Marker.DELETE:
+                if ns in schedule_markers_cache and mid in schedule_markers_cache[ns]:
+                    del schedule_markers_cache[ns][mid]
+                continue
+                
+            if marker.action == Marker.ADD: # or MODIFY
+                if ns not in schedule_markers_cache:
+                    schedule_markers_cache[ns] = {}
+                
+                # Simplify data for frontend
+                m_data = {
+                    'type': marker.type, # 3=CYLINDER, 4=LINE_STRIP
+                    'pose': {
+                        'x': marker.pose.position.x,
+                        'y': marker.pose.position.y
+                    },
+                    'scale': {
+                        'x': marker.scale.x,
+                        'y': marker.scale.y,
+                        'z': marker.scale.z
+                    },
+                    'color': {
+                        'r': marker.color.r,
+                        'g': marker.color.g,
+                        'b': marker.color.b,
+                        'a': marker.color.a
+                    },
+                    'points': [],
+                    'timestamp': time.time(),
+                    'lifetime': marker.lifetime.sec + marker.lifetime.nanosec * 1e-9
+                }
+                
+                for p in marker.points:
+                    m_data['points'].append({'x': p.x, 'y': p.y})
+                    
+                schedule_markers_cache[ns][mid] = m_data
+
+        # Emit updated cache
+        # Note: Sending full cache might be heavy if there are many markers.
+        # But for simple visualization it's okay.
+        socketio.emit('schedule_markers_update', schedule_markers_cache)
 
 # Flask Routes
 @app.route('/')
