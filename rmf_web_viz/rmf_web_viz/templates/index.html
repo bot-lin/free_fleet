@@ -221,19 +221,19 @@
                     
                     push();
                     translate(meta.x, -meta.y); // Position in meters (flip Y)
-                    // Images in RMF might need rotation or specific alignment
-                    // Usually origin is top-left of image?
-                    // P5 image() draws from top-left by default.
                     
-                    // Note: RMF coordinate system Y is up, Image Y is down.
-                    // If we just flip Y globally, the image will be drawn upside down unless we flip scale Y.
-                    scale(1, -1); 
+                    // Note: RMF coordinate system Y is up, Image Y is down (pixel coordinates).
+                    // Since we map RMF +Y to Screen -Y (up), and Image +Y (down) to Screen +Y (down),
+                    // the Image Y axis is actually inverted relative to RMF Y axis.
+                    // But visually on screen, we want "Image Up" to be "Screen Up".
+                    // image() draws "Image Up" at y=0, and "Image Down" at y=h.
+                    // So we just draw it normally.
+                    
+                    // However, we need to check if the image origin needs adjustment.
+                    // Usually AffineImage origin is top-left.
                     
                     // Draw image
-                    // x, y, w, h
-                    // We draw at 0,0 relative to the translated origin
-                    // But since we flipped Y, we might need to adjust y position if origin is top-left
-                    image(img, 0, -imgHeightMeters, imgWidthMeters, imgHeightMeters);
+                    image(img, 0, 0, imgWidthMeters, imgHeightMeters);
                     
                     pop();
                 });
