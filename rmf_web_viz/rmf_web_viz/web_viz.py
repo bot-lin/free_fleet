@@ -99,6 +99,9 @@ class RmfWebVizNode(Node):
         }
         
         for level in msg.levels:
+            # Debug: print available fields
+            # self.get_logger().info(f"Level fields: {dir(level)}")
+            
             level_data = {
                 'name': level.name,
                 'elevation': level.elevation,
@@ -111,8 +114,6 @@ class RmfWebVizNode(Node):
                     'x': image.x_offset,
                     'y': image.y_offset,
                     'scale': image.scale, 
-                    # 'width': image.width, # AffineImage does not have width/height
-                    # 'height': image.height,
                     'encoding': image.encoding,
                     'data_len': len(image.data)
                 })
@@ -121,10 +122,13 @@ class RmfWebVizNode(Node):
             walls = []
             vertices = []
             
-            for v in level.vertices:
+            # Check for vertices (sometimes named differently or part of graph)
+            level_vertices = getattr(level, 'vertices', [])
+            for v in level_vertices:
                 vertices.append({'x': v.x, 'y': v.y, 'name': v.name})
                 
-            for w in level.walls:
+            level_walls = getattr(level, 'walls', [])
+            for w in level_walls:
                 walls.append({'v1': w.v1_idx, 'v2': w.v2_idx, 'type': w.wall_type})
                 
             level_data['vertices'] = vertices
