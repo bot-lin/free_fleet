@@ -37,6 +37,7 @@ from free_fleet.ros2_types import (
     NavigateThroughPoses_SendGoal_Request,
     NavigateThroughPoses_SendGoal_Response,
     LoadMap_Request,
+    LoadMap_Response,
     SensorMsgs_BatteryState,
     TFMessage,
     Time,
@@ -490,22 +491,34 @@ class Nav2RobotAdapter(RobotAdapter):
         nav_handle: ExecutionHandle
     ):
         if map_name != self.map_name:
-            # TODO(ac): test this map related replanning behavior
-            self.replan_counts += 1
-            self.node.get_logger().error(
+            self.node.get_logger().info(
                 f'Destination is on map [{map_name}], while robot '
-                f'[{self.name}] is on map [{self.map_name}], replan count '
-                f'[{self.replan_counts}]'
+                f'[{self.name}] is on map [{self.map_name}]. '
+                f'Attempting to change map...'
             )
-
-            if self.update_handle is None:
-                error_message = \
-                    f'Failed to replan for robot {self.name}, robot adapter ' \
-                    'has not yet been initialized with a fleet update handle.'
-                self.node.get_logger().error(error_message)
+            success = self.change_map(map_name)
+            if success:
+                self.map_name = map_name
+                self.node.get_logger().info(
+                    f'Successfully changed map to [{map_name}].'
+                )
+                # TODO(ac): Should we also republish initial pose here?
+                # Usually map change implies position reset or known transform
+            else:
+                self.replan_counts += 1
+                self.node.get_logger().error(
+                    f'Failed to change map to [{map_name}], replan count '
+                    f'[{self.replan_counts}]'
+                )
+                if self.update_handle is None:
+                    error_message = \
+                        f'Failed to replan for robot {self.name}, robot ' \
+                        'adapter has not yet been initialized with a fleet ' \
+                        'update handle.'
+                    self.node.get_logger().error(error_message)
+                    return
+                self.update_handle.more().replan()
                 return
-            self.update_handle.more().replan()
-            return
 
         time_now = self.node.get_clock().now().seconds_nanoseconds()
         stamp = Time(sec=time_now[0], nanosec=time_now[1])
@@ -623,16 +636,66 @@ class Nav2RobotAdapter(RobotAdapter):
                         f'Error payload: {reply.err.payload.to_string()}'
                     )
 
-    def stop(self, activity: ActivityIdentifier):
-        exec_handle = self.exec_handle
-        if exec_handle is None:
-            return
+    def change_map(
+        self,
+        map_name: str,
+    ):
+        map_url = '/data/maps/' + map_name + '.yaml'
+        value = LoadMap_Request(map_url=map_url)
+        replies = self.zenoh_session.get(
+            namespacify('map_server/load_map', self.name),
+            payload=value.serialize(),
+            # timeout=0.5
+        )
+        for reply in replies:
+            try:
+                rep = LoadMap_Response.deserialize(
+                    reply.ok.payload.to_bytes()
+                )
+                self.node.get_logger().info(
+                    f'Map server load map result: {rep.result}'
+                )
+                if not rep.result == 0:
+                    return False
+            except Exception as e:
+                self.node.get_logger().warn(
+                    f'Failed to deserialize map load response: {e}. '
+                    f'Reply might be an error.'
+                )
+                if hasattr(reply, 'err') and reply.err:
+                    self.node.get_logger().warn(
+                        f'Error payload: {reply.err.payload.to_string()}'
+                    )
+                return False
 
-        if exec_handle.execution is not None and \
-                activity.is_same(exec_handle.activity):
-            self._request_stop(exec_handle)
-            self.exec_handle = None
-            # TODO(ac/xy): check return code before setting exec_handle to None
+        map_url = '/data/maps/mask/' + map_name + '.yaml'
+        value = LoadMap_Request(map_url=map_url)
+        replies = self.zenoh_session.get(
+            namespacify('filter_mask_server/load_map', self.name),
+            payload=value.serialize(),
+            # timeout=0.5
+        )
+        for reply in replies:
+            try:
+                rep = LoadMap_Response.deserialize(
+                    reply.ok.payload.to_bytes()
+                )
+                self.node.get_logger().info(
+                    f'Filter mask server load map result: {rep.result}'
+                )
+                if not rep.result == 0:
+                    return False
+            except Exception as e:
+                self.node.get_logger().warn(
+                    f'Failed to deserialize mask load response: {e}. '
+                    f'Reply might be an error.'
+                )
+                if hasattr(reply, 'err') and reply.err:
+                    self.node.get_logger().warn(
+                        f'Error payload: {reply.err.payload.to_string()}'
+                    )
+                return False
+        return True
 
     def execute_action(
         self,

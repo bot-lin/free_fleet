@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Open-RMF Web Visualizer</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background-color: #f0f0f0; }
+        #canvas-container { border: 1px solid #ccc; background-color: white; margin-top: 10px; width: 800px; height: 600px; overflow: hidden; position: relative; }
+        .controls { margin-bottom: 10px; }
+        .sidebar { float: right; width: 300px; background: white; padding: 10px; border-left: 1px solid #ccc; height: 600px; overflow-y: auto; }
+        .robot-card { border: 1px solid #ddd; padding: 5px; margin-bottom: 5px; border-radius: 4px; }
+        .status-ok { color: green; }
+        .status-warn { color: orange; }
+    </style>
+</head>
+<body>
+    <h1>Open-RMF Web Visualizer</h1>
+    
+    <div class="controls">
+        <label for="level-select">Level:</label>
+        <select id="level-select">
+            <option value="">Waiting for map...</option>
+        </select>
+        <span id="connection-status">Connecting...</span>
+    </div>
+
+    <div style="display: flex;">
+        <div id="canvas-container">
+            <!-- P5.js canvas will be here -->
+        </div>
+        <div class="sidebar" id="fleet-sidebar">
+            <h3>Fleets</h3>
+            <div id="fleets-list"></div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        let currentMap = null;
+        let fleetStates = {};
+        let currentLevel = null;
+        let scale = 20.0; // Pixels per meter
+        let offsetX = 400;
+        let offsetY = 300;
+
+        // SocketIO Events
+        socket.on('connect', () => {
+            document.getElementById('connection-status').innerText = 'Connected';
+            document.getElementById('connection-status').style.color = 'green';
+        });
+
+        socket.on('disconnect', () => {
+            document.getElementById('connection-status').innerText = 'Disconnected';
+            document.getElementById('connection-status').style.color = 'red';
+        });
+
+        socket.on('map_update', (data) => {
+            console.log('Map received', data);
+            currentMap = data;
+            updateLevelSelect();
+        });
+
+        socket.on('fleet_update', (data) => {
+            fleetStates[data.name] = data;
+            updateFleetSidebar();
+        });
+
+        function updateLevelSelect() {
+            const select = document.getElementById('level-select');
+            select.innerHTML = '';
+            if (currentMap && currentMap.levels) {
+                currentMap.levels.forEach(level => {
+                    const option = document.createElement('option');
+                    option.value = level.name;
+                    option.innerText = level.name;
+                    select.appendChild(option);
+                });
+                if (currentMap.levels.length > 0 && !currentLevel) {
+                    currentLevel = currentMap.levels[0].name;
+                    select.value = currentLevel;
+                }
+            }
+        }
+
+        document.getElementById('level-select').addEventListener('change', (e) => {
+            currentLevel = e.target.value;
+        });
+
+        function updateFleetSidebar() {
+            const list = document.getElementById('fleets-list');
+            list.innerHTML = '';
+            
+            for (const [fleetName, fleetData] of Object.entries(fleetStates)) {
+                const fleetHeader = document.createElement('h4');
+                fleetHeader.innerText = fleetName;
+                list.appendChild(fleetHeader);
+
+                fleetData.robots.forEach(robot => {
+                    const div = document.createElement('div');
+                    div.className = 'robot-card';
+                    div.innerHTML = `
+                        <strong>${robot.name}</strong><br>
+                        Batt: ${robot.battery_percent.toFixed(1)}%<br>
+                        Loc: ${robot.location.level_name} (${robot.location.x.toFixed(2)}, ${robot.location.y.toFixed(2)})<br>
+                        Status: ${robot.status}
+                    `;
+                    list.appendChild(div);
+                });
+            }
+        }
+
+        // P5.js Visualization
+        function setup() {
+            const canvas = createCanvas(800, 600);
+            canvas.parent('canvas-container');
+        }
+
+        function draw() {
+            background(255);
+            
+            // Apply transformations
+            translate(offsetX, offsetY);
+            scale(scale); // Zoom
+            
+            // Draw Coordinate Grid (Origin)
+            stroke(200);
+            strokeWeight(1/scale);
+            line(-100, 0, 100, 0);
+            line(0, -100, 0, 100);
+
+            if (currentMap && currentLevel) {
+                const level = currentMap.levels.find(l => l.name === currentLevel);
+                if (level) {
+                    drawLevel(level);
+                }
+            }
+
+            drawRobots();
+        }
+
+        function drawLevel(level) {
+            // Draw walls
+            if (level.walls && level.vertices) {
+                stroke(0);
+                strokeWeight(2/scale);
+                level.walls.forEach(wall => {
+                    const v1 = level.vertices[wall.v1];
+                    const v2 = level.vertices[wall.v2];
+                    if (v1 && v2) {
+                        line(v1.x, -v1.y, v2.x, -v2.y); // Flip Y axis for standard map visualization
+                    }
+                });
+            }
+        }
+
+        function drawRobots() {
+            for (const fleet of Object.values(fleetStates)) {
+                for (const robot of fleet.robots) {
+                    // Only draw robots on current level
+                    if (robot.location.level_name === currentLevel) {
+                        push();
+                        translate(robot.location.x, -robot.location.y); // Flip Y
+                        rotate(-robot.location.yaw); // Rotate robot
+                        
+                        // Draw robot body
+                        fill(0, 100, 255);
+                        stroke(0);
+                        strokeWeight(1/scale);
+                        ellipse(0, 0, 0.5, 0.5); // 0.5m diameter robot
+                        
+                        // Draw heading
+                        line(0, 0, 0.3, 0);
+                        
+                        // Label
+                        scale(1, -1); // Unflip text
+                        rotate(robot.location.yaw);
+                        fill(0);
+                        noStroke();
+                        textSize(0.3);
+                        textAlign(CENTER);
+                        text(robot.name, 0, -0.4);
+                        
+                        pop();
+                    }
+                }
+            }
+        }
+
+        // Simple Pan/Zoom interaction
+        function mouseDragged() {
+            offsetX += movedX;
+            offsetY += movedY;
+        }
+
+        function mouseWheel(event) {
+            let zoomSensitivity = 0.05;
+            let zoom = 1.0;
+            if (event.delta > 0) {
+                zoom = 1.0 - zoomSensitivity;
+            } else {
+                zoom = 1.0 + zoomSensitivity;
+            }
+            scale *= zoom;
+            return false;
+        }
+    </script>
+</body>
+</html>
+

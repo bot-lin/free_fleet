@@ -225,5 +225,42 @@ class SensorMsgs_BatteryState(IdlStruct):
     serial_number: str
 
 @dataclass
+class Position(IdlStruct):
+    x: pycdr2.types.float64
+    y: pycdr2.types.float64
+    z: pycdr2.types.float64
+
+@dataclass
+class Orientation(IdlStruct):
+    x: pycdr2.types.float64
+    y: pycdr2.types.float64
+    z: pycdr2.types.float64
+    w: pycdr2.types.float64
+
+@dataclass
+class Pose(IdlStruct):
+    position: Position
+    orientation: Orientation
+
+@dataclass
 class LoadMap_Request(IdlStruct):
     map_url: str
+
+@dataclass
+class MapMetaData(IdlStruct):
+    map_load_time: Time
+    resolution: pycdr2.types.float32
+    width: pycdr2.types.uint32
+    height: pycdr2.types.uint32
+    origin: Pose
+
+@dataclass
+class OccupancyGrid(IdlStruct):
+    header: Header
+    info: MapMetaData
+    data: pycdr2.types.sequence[pycdr2.types.int8]
+
+@dataclass
+class LoadMap_Response(IdlStruct):
+    map: OccupancyGrid
+    result: pycdr2.types.uint8
