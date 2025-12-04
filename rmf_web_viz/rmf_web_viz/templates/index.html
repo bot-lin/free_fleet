@@ -42,7 +42,7 @@
         let currentMap = null;
         let fleetStates = {};
         let currentLevel = null;
-        let scale = 20.0; // Pixels per meter
+        let mapScale = 20.0; // Pixels per meter
         let offsetX = 400;
         let offsetY = 300;
 
@@ -123,11 +123,11 @@
             
             // Apply transformations
             translate(offsetX, offsetY);
-            scale(scale); // Zoom
+            scale(mapScale); // Zoom
             
             // Draw Coordinate Grid (Origin)
             stroke(200);
-            strokeWeight(1/scale);
+            strokeWeight(1/mapScale);
             line(-100, 0, 100, 0);
             line(0, -100, 0, 100);
 
@@ -147,10 +147,10 @@
             level.graphs.forEach(graph => {
                 if (graph.type === 'wall') {
                     stroke(0); // Black for walls
-                    strokeWeight(3/scale);
+                    strokeWeight(3/mapScale);
                 } else {
                     stroke(200); // Light gray for nav paths
-                    strokeWeight(1/scale);
+                    strokeWeight(1/mapScale);
                 }
 
                 if (graph.edges && graph.vertices) {
@@ -186,7 +186,7 @@
                         // Draw robot body
                         fill(0, 100, 255);
                         stroke(0);
-                        strokeWeight(1/scale);
+                        strokeWeight(1/mapScale);
                         ellipse(0, 0, 0.5, 0.5); // 0.5m diameter robot
                         
                         // Draw heading
@@ -221,7 +221,7 @@
             } else {
                 zoom = 1.0 + zoomSensitivity;
             }
-            scale *= zoom;
+            mapScale *= zoom;
             return false;
         }
     </script>
