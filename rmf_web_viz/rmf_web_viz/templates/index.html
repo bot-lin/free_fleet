@@ -142,18 +142,36 @@
         }
 
         function drawLevel(level) {
-            // Draw walls
-            if (level.walls && level.vertices) {
-                stroke(0);
-                strokeWeight(2/scale);
-                level.walls.forEach(wall => {
-                    const v1 = level.vertices[wall.v1];
-                    const v2 = level.vertices[wall.v2];
-                    if (v1 && v2) {
-                        line(v1.x, -v1.y, v2.x, -v2.y); // Flip Y axis for standard map visualization
-                    }
-                });
-            }
+            if (!level.graphs) return;
+
+            level.graphs.forEach(graph => {
+                if (graph.type === 'wall') {
+                    stroke(0); // Black for walls
+                    strokeWeight(3/scale);
+                } else {
+                    stroke(200); // Light gray for nav paths
+                    strokeWeight(1/scale);
+                }
+
+                if (graph.edges && graph.vertices) {
+                    graph.edges.forEach(edge => {
+                        const v1 = graph.vertices[edge.v1];
+                        const v2 = graph.vertices[edge.v2];
+                        if (v1 && v2) {
+                            line(v1.x, -v1.y, v2.x, -v2.y);
+                        }
+                    });
+                }
+                
+                // Optional: Draw vertices for nav graphs to see waypoints
+                if (graph.type === 'nav') {
+                    fill(150);
+                    noStroke();
+                    graph.vertices.forEach(v => {
+                        ellipse(v.x, -v.y, 0.2, 0.2);
+                    });
+                }
+            });
         }
 
         function drawRobots() {

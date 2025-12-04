@@ -118,21 +118,50 @@ class RmfWebVizNode(Node):
                     'data_len': len(image.data)
                 })
             
-            # Extract walls/vertices for drawing if no image
-            walls = []
-            vertices = []
+            # Extract data from graphs (nav_graphs and wall_graph)
+            # Structure: Level -> nav_graphs (list) -> Graph -> vertices/edges
+            #            Level -> wall_graph (Graph) -> vertices/edges
             
-            # Check for vertices (sometimes named differently or part of graph)
-            level_vertices = getattr(level, 'vertices', [])
-            for v in level_vertices:
-                vertices.append({'x': v.x, 'y': v.y, 'name': v.name})
+            graphs = []
+            
+            # Process Navigation Graphs
+            for graph in getattr(level, 'nav_graphs', []):
+                graph_data = {
+                    'name': graph.name,
+                    'type': 'nav',
+                    'vertices': [],
+                    'edges': []
+                }
+                for v in graph.vertices:
+                    graph_data['vertices'].append({'x': v.x, 'y': v.y, 'name': v.name})
                 
-            level_walls = getattr(level, 'walls', [])
-            for w in level_walls:
-                walls.append({'v1': w.v1_idx, 'v2': w.v2_idx, 'type': w.wall_type})
+                for e in graph.edges:
+                    graph_data['edges'].append({'v1': e.v1_idx, 'v2': e.v2_idx, 'type': e.edge_type})
                 
-            level_data['vertices'] = vertices
-            level_data['walls'] = walls
+                graphs.append(graph_data)
+
+            # Process Wall Graph
+            wall_graph = getattr(level, 'wall_graph', None)
+            if wall_graph:
+                graph_data = {
+                    'name': wall_graph.name,
+                    'type': 'wall',
+                    'vertices': [],
+                    'edges': []
+                }
+                for v in wall_graph.vertices:
+                    graph_data['vertices'].append({'x': v.x, 'y': v.y, 'name': v.name})
+                
+                for e in wall_graph.edges:
+                    graph_data['edges'].append({'v1': e.v1_idx, 'v2': e.v2_idx, 'type': e.edge_type})
+                
+                graphs.append(graph_data)
+            
+            level_data['graphs'] = graphs
+            
+            # Legacy fields for frontend compatibility (optional, can remove if frontend updated)
+            level_data['vertices'] = [] 
+            level_data['walls'] = []
             
             map_data['levels'].append(level_data)
             
