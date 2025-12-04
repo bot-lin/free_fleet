@@ -11,6 +11,7 @@ from flask import Flask, render_template
 from flask_socketio import SocketIO
 import json
 import os
+import base64
 
 # Initialize Flask and SocketIO
 # Use absolute paths for templates/static based on this file's location
@@ -109,12 +110,16 @@ class RmfWebVizNode(Node):
             }
             
             for image in level.images:
+                # Convert image data to base64 for frontend display
+                img_base64 = base64.b64encode(bytes(image.data)).decode('utf-8')
+                
                 level_data['images'].append({
                     'name': image.name,
                     'x': image.x_offset,
                     'y': image.y_offset,
                     'scale': image.scale, 
                     'encoding': image.encoding,
+                    'data_base64': img_base64,
                     'data_len': len(image.data)
                 })
             

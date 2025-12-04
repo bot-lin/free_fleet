@@ -45,6 +45,7 @@
         let mapScale = 20.0; // Pixels per meter
         let offsetX = 400;
         let offsetY = 300;
+        let levelImages = {}; // Cache for loaded P5 images: { levelName: [p5Image, ...] }
 
         // SocketIO Events
         socket.on('connect', () => {
@@ -62,6 +63,7 @@
                     if (data && data.name) {
                         console.log('Map fetched via API', data);
                         currentMap = data;
+                        loadMapImages();
                         updateLevelSelect();
                     } else {
                         console.log('API returned empty map or invalid data');
@@ -78,8 +80,41 @@
         socket.on('map_update', (data) => {
             console.log('Map received', data);
             currentMap = data;
+            loadMapImages();
             updateLevelSelect();
         });
+
+        function loadMapImages() {
+            if (!currentMap || !currentMap.levels) return;
+            
+            levelImages = {}; // Reset cache
+            
+            currentMap.levels.forEach(level => {
+                if (level.images) {
+                    level.images.forEach(imgData => {
+                        if (imgData.data_base64) {
+                            // Assume png if not specified, though RMF usually provides encoding
+                            const encoding = imgData.encoding || 'png';
+                            const imgUrl = 'data:image/' + encoding + ';base64,' + imgData.data_base64;
+                            
+                            loadImage(imgUrl, (p5Img) => {
+                                if (!levelImages[level.name]) {
+                                    levelImages[level.name] = [];
+                                }
+                                // Store image with its metadata
+                                levelImages[level.name].push({
+                                    img: p5Img,
+                                    meta: imgData
+                                });
+                                console.log('Loaded image for level:', level.name, imgData.name);
+                            }, (err) => {
+                                console.error('Failed to load image:', err);
+                            });
+                        }
+                    });
+                }
+            });
+        }
 
         socket.on('fleet_update', (data) => {
             fleetStates[data.name] = data;
@@ -170,6 +205,40 @@
         }
 
         function drawLevel(level) {
+            // Draw images first (background)
+            if (levelImages[level.name]) {
+                levelImages[level.name].forEach(item => {
+                    const img = item.img;
+                    const meta = item.meta;
+                    
+                    // meta.scale is meters per pixel
+                    // We want to draw it in world coordinates (meters)
+                    // The drawing context is already scaled by mapScale (pixels/meter)
+                    // So if we draw with width/height in meters, it will be correct.
+                    
+                    const imgWidthMeters = img.width * meta.scale;
+                    const imgHeightMeters = img.height * meta.scale;
+                    
+                    push();
+                    translate(meta.x, -meta.y); // Position in meters (flip Y)
+                    // Images in RMF might need rotation or specific alignment
+                    // Usually origin is top-left of image?
+                    // P5 image() draws from top-left by default.
+                    
+                    // Note: RMF coordinate system Y is up, Image Y is down.
+                    // If we just flip Y globally, the image will be drawn upside down unless we flip scale Y.
+                    scale(1, -1); 
+                    
+                    // Draw image
+                    // x, y, w, h
+                    // We draw at 0,0 relative to the translated origin
+                    // But since we flipped Y, we might need to adjust y position if origin is top-left
+                    image(img, 0, -imgHeightMeters, imgWidthMeters, imgHeightMeters);
+                    
+                    pop();
+                });
+            }
+
             if (!level.graphs) return;
 
             level.graphs.forEach(graph => {
