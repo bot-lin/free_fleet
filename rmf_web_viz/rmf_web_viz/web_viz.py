@@ -108,9 +108,9 @@ class RmfWebVizNode(Node):
             for image in level.images:
                 level_data['images'].append({
                     'name': image.name,
-                    'x': image.x,
-                    'y': image.y,
-                    'scale': image.scale_x, # Assuming square pixels/scale
+                    'x': image.x_offset,
+                    'y': image.y_offset,
+                    'scale': image.scale, 
                     'width': image.width,
                     'height': image.height,
                     # Note: Image data itself (byte array) might be heavy to send repeatedly
