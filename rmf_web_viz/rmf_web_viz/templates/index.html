@@ -50,7 +50,25 @@
         socket.on('connect', () => {
             document.getElementById('connection-status').innerText = 'Connected';
             document.getElementById('connection-status').style.color = 'green';
+            // Fetch map immediately in case we missed the socket event
+            fetchMap();
         });
+
+        function fetchMap() {
+            fetch('/api/map')
+                .then(response => response.json())
+                .then(data => {
+                    // Check if data is valid map object
+                    if (data && data.name) {
+                        console.log('Map fetched via API', data);
+                        currentMap = data;
+                        updateLevelSelect();
+                    } else {
+                        console.log('API returned empty map or invalid data');
+                    }
+                })
+                .catch(err => console.error('Failed to fetch map:', err));
+        }
 
         socket.on('disconnect', () => {
             document.getElementById('connection-status').innerText = 'Disconnected';
@@ -72,16 +90,26 @@
             const select = document.getElementById('level-select');
             select.innerHTML = '';
             if (currentMap && currentMap.levels) {
+                console.log('Updating levels:', currentMap.levels.length);
                 currentMap.levels.forEach(level => {
                     const option = document.createElement('option');
                     option.value = level.name;
                     option.innerText = level.name;
                     select.appendChild(option);
                 });
-                if (currentMap.levels.length > 0 && !currentLevel) {
-                    currentLevel = currentMap.levels[0].name;
-                    select.value = currentLevel;
+                
+                if (currentMap.levels.length > 0) {
+                    // Auto-select first level if needed
+                    if (!currentLevel || !currentMap.levels.find(l => l.name === currentLevel)) {
+                        currentLevel = currentMap.levels[0].name;
+                        select.value = currentLevel;
+                        console.log('Auto-selected level:', currentLevel);
+                    } else {
+                        select.value = currentLevel;
+                    }
                 }
+            } else {
+                console.warn('No levels found in map data');
             }
         }
 
