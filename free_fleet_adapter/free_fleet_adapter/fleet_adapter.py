@@ -144,7 +144,7 @@ def start_fleet_adapter(
             node.get_logger().info(f"Configured Zenoh connect endpoints: {endpoints_json_str}")
         except Exception as e:
              node.get_logger().warn(f"Failed to configure Zenoh endpoints: {e}")
-
+    zenoh_config.insert_json5("scouting/multicast/enabled", "false")
     zenoh_session = zenoh.open(zenoh_config)
 
     # Set up tf2 buffer
