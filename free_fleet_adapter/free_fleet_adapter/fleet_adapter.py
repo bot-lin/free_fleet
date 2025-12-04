@@ -116,6 +116,35 @@ def start_fleet_adapter(
     # Initialize zenoh
     zenoh_config = zenoh.Config.from_file(zenoh_config_path) \
         if zenoh_config_path is not None else zenoh.Config()
+
+    # Automatically add robot IPs to Zenoh connect endpoints if available
+    endpoints = []
+    if 'rmf_fleet' in config_yaml and 'robots' in config_yaml['rmf_fleet']:
+        for robot_name, robot_data in config_yaml['rmf_fleet']['robots'].items():
+            if 'network_ip' in robot_data:
+                ip = robot_data['network_ip']
+                # Assume default Zenoh port 7447 if not specified, protocol tcp
+                endpoint = f"tcp/{ip}:7447"
+                endpoints.append(endpoint)
+                node.get_logger().info(f"Adding Zenoh endpoint for robot {robot_name}: {endpoint}")
+
+    if endpoints:
+        try:
+            # zenoh.Config.insert_json5 works by inserting a JSON5 string at the specified key.
+            # For a list, we need to format it as a JSON array string.
+            # E.g. "['tcp/192.168.0.1:7447', 'tcp/192.168.0.2:7447']"
+            # Note: This will overwrite existing endpoints if any were loaded from file.
+            # If we want to append, we'd need to read the existing ones first, which is tricky
+            # without a clear get API in this context. Assuming we want to ensure these are connected.
+            # Zenoh supports multiple calls to insert_json5 for different keys, but for the same key
+            # it might replace. However, 'connect/endpoints' is a list.
+            # Constructing the full list string:
+            endpoints_json_str = str(endpoints).replace("'", '"') # JSON uses double quotes
+            zenoh_config.insert_json5("connect/endpoints", endpoints_json_str)
+            node.get_logger().info(f"Configured Zenoh connect endpoints: {endpoints_json_str}")
+        except Exception as e:
+             node.get_logger().warn(f"Failed to configure Zenoh endpoints: {e}")
+
     zenoh_session = zenoh.open(zenoh_config)
 
     # Set up tf2 buffer
