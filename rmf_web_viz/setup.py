@@ -13,9 +13,10 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.xml')),
-        (os.path.join('lib', package_name, 'templates'), glob(package_name + '/templates/*')),
-        (os.path.join('lib', package_name, 'static'), glob(package_name + '/static/*')),
     ],
+    package_data={
+        package_name: ['templates/*', 'static/*'],
+    },
     install_requires=['setuptools', 'Flask', 'python-socketio', 'eventlet'],
     zip_safe=True,
     maintainer='user',
@@ -29,4 +30,3 @@ setup(
         ],
     },
 )
-

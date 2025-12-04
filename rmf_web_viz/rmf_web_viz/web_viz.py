@@ -1,5 +1,7 @@
 import rclpy
 from rclpy.node import Node
+from rclpy.executors import MultiThreadedExecutor
+from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
 from rmf_fleet_msgs.msg import FleetState
 from rmf_building_map_msgs.msg import BuildingMap
 from rmf_site_map_msgs.msg import SiteMap
@@ -11,7 +13,12 @@ import json
 import os
 
 # Initialize Flask and SocketIO
-app = Flask(__name__, template_folder='templates', static_folder='static')
+# Use absolute paths for templates/static based on this file's location
+base_dir = os.path.abspath(os.path.dirname(__file__))
+template_dir = os.path.join(base_dir, 'templates')
+static_dir = os.path.join(base_dir, 'static')
+
+app = Flask(__name__, template_folder=template_dir, static_folder=static_dir)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 # Global storage for latest states
@@ -22,7 +29,8 @@ class RmfWebVizNode(Node):
     def __init__(self):
         super().__init__('rmf_web_viz')
         
-        # Subscribe to fleet states
+        # QoS Profile for Fleet States (usually Volatile is fine, but Best Effort is common for high freq)
+        # Using default reliable for now or system default.
         self.create_subscription(
             FleetState,
             '/fleet_states',
@@ -30,12 +38,20 @@ class RmfWebVizNode(Node):
             10
         )
         
+        # QoS Profile for Building Map (Transient Local is required to get the map if it was published before node start)
+        map_qos = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL
+        )
+        
         # Subscribe to building map (floorplan)
         self.create_subscription(
             BuildingMap,
             '/map',
             self.building_map_callback,
-            10
+            qos_profile=map_qos
         )
 
         self.get_logger().info('RMF Web Viz Node Started')
@@ -142,8 +158,12 @@ def main(args=None):
     # Create the ROS node
     node = RmfWebVizNode()
     
-    # Run ROS node in a separate thread
-    ros_thread = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)
+    # Use MultiThreadedExecutor
+    executor = MultiThreadedExecutor()
+    executor.add_node(node)
+    
+    # Run ROS executor in a separate thread
+    ros_thread = threading.Thread(target=executor.spin, daemon=True)
     ros_thread.start()
     
     # Run Flask/SocketIO app
@@ -153,8 +173,9 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
+        executor.shutdown()
+        node.destroy_node()
         rclpy.shutdown()
 
 if __name__ == '__main__':
     main()
-
