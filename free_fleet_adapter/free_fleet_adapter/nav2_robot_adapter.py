@@ -605,12 +605,22 @@ class Nav2RobotAdapter(RobotAdapter):
             timeout=self.service_call_timeout_sec
         )
         for reply in replies:
-            rep = ActionMsgs_CancelGoal_Response.deserialize(
-                reply.ok.payload.to_bytes()
-            )
-            self.node.get_logger().info(
-                'Return code: %d' % rep.return_code
-            )
+            try:
+                rep = ActionMsgs_CancelGoal_Response.deserialize(
+                    reply.ok.payload.to_bytes()
+                )
+                self.node.get_logger().info(
+                    'Return code: %d' % rep.return_code
+                )
+            except Exception as e:
+                self.node.get_logger().warn(
+                    f'Failed to deserialize cancel goal response: {e}. '
+                    f'Reply might be an error.'
+                )
+                if hasattr(reply, 'err') and reply.err:
+                    self.node.get_logger().warn(
+                        f'Error payload: {reply.err.payload.to_string()}'
+                    )
 
     def stop(self, activity: ActivityIdentifier):
         exec_handle = self.exec_handle
