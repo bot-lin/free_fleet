@@ -223,3 +223,7 @@ class SensorMsgs_BatteryState(IdlStruct):
     cell_temperature: pycdr2.types.sequence[pycdr2.types.float32]
     location: str
     serial_number: str
+
+@dataclass
+class LoadMap_Request(IdlStruct):
+    map_url: str

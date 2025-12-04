@@ -36,6 +36,7 @@ from free_fleet.ros2_types import (
     NavigateThroughPoses_GetResult_Response,
     NavigateThroughPoses_SendGoal_Request,
     NavigateThroughPoses_SendGoal_Response,
+    LoadMap_Request,
     SensorMsgs_BatteryState,
     TFMessage,
     Time,
