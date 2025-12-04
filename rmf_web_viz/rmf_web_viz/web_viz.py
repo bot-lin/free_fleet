@@ -61,7 +61,7 @@ class RmfWebVizNode(Node):
                     'level_name': robot.location.level_name,
                 },
                 'mode': robot.mode.mode,
-                'status': robot.status
+                'task_id': robot.task_id
             }
             fleet_data['robots'].append(robot_data)
         
