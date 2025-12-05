@@ -30,6 +30,20 @@ latest_building_map = None
 # Schedule markers cache: { ns: { id: marker_data } }
 schedule_markers_cache = {}
 
+# Robot Mode Constants
+ROBOT_MODES = {
+    0: 'IDLE',
+    1: 'CHARGING',
+    2: 'MOVING',
+    3: 'PAUSED',
+    4: 'WAITING',
+    5: 'EMERGENCY',
+    6: 'GOING_HOME',
+    7: 'DOCKING',
+    8: 'ADAPTER_ERROR',
+    9: 'CLEANING'
+}
+
 class RmfWebVizNode(Node):
     def __init__(self):
         super().__init__('rmf_web_viz')
@@ -89,7 +103,7 @@ class RmfWebVizNode(Node):
                     'yaw': robot.location.yaw,
                     'level_name': robot.location.level_name,
                 },
-                'mode': robot.mode.mode,
+                'mode': ROBOT_MODES.get(robot.mode.mode, f'UNKNOWN({robot.mode.mode})'),
                 'task_id': robot.task_id
             }
             fleet_data['robots'].append(robot_data)
