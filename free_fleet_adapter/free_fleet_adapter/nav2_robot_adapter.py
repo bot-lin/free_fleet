@@ -636,6 +636,11 @@ class Nav2RobotAdapter(RobotAdapter):
                         f'Error payload: {reply.err.payload.to_string()}'
                     )
 
+    def stop(self, activity: ActivityIdentifier):
+        exec_handle = self.exec_handle
+        if exec_handle is None:
+            return
+            
     def change_map(
         self,
         map_name: str,

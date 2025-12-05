@@ -9,4 +9,6 @@
     <arg name="server_uri" value="$(var server_uri)"/>
     <arg name="headless" value="false"/>
   </include>
+
+  <node pkg="rmf_web_viz" exec="web_viz" output="both"/>
 </launch>
