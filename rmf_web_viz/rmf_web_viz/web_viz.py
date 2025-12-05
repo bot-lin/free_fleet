@@ -271,7 +271,8 @@ def main(args=None):
     # Run Flask/SocketIO app
     print("Starting Web Server on http://0.0.0.0:5000")
     try:
-        socketio.run(app, host='0.0.0.0', port=5000, debug=False)
+        # allow_unsafe_werkzeug=True is needed for newer Flask-SocketIO versions when using threaded mode
+        socketio.run(app, host='0.0.0.0', port=5000, debug=False, allow_unsafe_werkzeug=True)
     except KeyboardInterrupt:
         pass
     finally:
