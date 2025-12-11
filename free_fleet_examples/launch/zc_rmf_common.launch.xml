@@ -11,4 +11,9 @@
   </include>
 
   <node pkg="rmf_web_viz" exec="web_viz" output="both"/>
+  <node pkg="zc_door_adapter"
+        exec="zc_door_adapter"
+        args="-c /data/params/door_config.yaml"
+        output="both">
+  </node>
 </launch>
