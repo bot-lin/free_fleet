@@ -128,7 +128,7 @@ class TaskRequester(Node):
             'description': self.args.pickup})
         activities.append({
             'category': 'perform_action',
-            'description': __create_perform_action('delivery_pickup')})
+            'description': __create_perform_action('hello_world')})
         # activities.append({
         #     'category': 'go_to_place',
         #     'description': self.args.dropoff})
