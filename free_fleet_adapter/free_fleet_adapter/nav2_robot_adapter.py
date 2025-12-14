@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import importlib
+import traceback
 from typing import Annotated
 
 from free_fleet.convert import transform_stamped_to_ros2_msg
@@ -314,12 +315,13 @@ class Nav2RobotAdapter(RobotAdapter):
                         f'Robot [{self.name}] will not be able to perform '
                         f'actions associated with this plugin.'
                     )
-                except ImportError:
-                    self.node.get_logger().info(
-                        f'Unable to import module for {plugin_name}! '
-                        f'Robot [{self.name}] will not be able to perform '
-                        f'actions associated with this plugin.'
+                except ImportError as e:
+                    # Include the module path and exception details to help debug
+                    self.node.get_logger().error(
+                        f'Unable to import plugin module [{module}] for plugin '
+                        f'[{plugin_name}] on robot [{self.name}]: {type(e)}: {e}'
                     )
+                    self.node.get_logger().debug(traceback.format_exc())
 
     def get_battery_soc(self) -> float:
         return self.battery_soc
