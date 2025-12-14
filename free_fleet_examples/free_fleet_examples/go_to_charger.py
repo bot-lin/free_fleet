@@ -109,7 +109,7 @@ class TaskRequester(Node):
                     'description':
                     {
                         # for fleet manager to start action process
-                        'deliver_cart_task_name': action_category
+                        'action': "reflector_docking"
                     },
                     'use_tool_sink': use_tool_sink
                     }
@@ -119,7 +119,7 @@ class TaskRequester(Node):
 
         # Define task request description with phases
         description = {}  # task_description_Compose.json
-        description['category'] = 'deliver_cart'
+        description['category'] = 'go_to_charger'
         description['phases'] = []
         activities = []
         # Add each phase
@@ -128,7 +128,7 @@ class TaskRequester(Node):
             'description': self.args.pickup})
         activities.append({
             'category': 'perform_action',
-            'description': __create_perform_action('hello_world')})
+            'description': __create_perform_action('go_to_charger')})
         # activities.append({
         #     'category': 'go_to_place',
         #     'description': self.args.dropoff})
