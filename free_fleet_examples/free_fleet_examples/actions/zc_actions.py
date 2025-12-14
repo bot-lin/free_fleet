@@ -30,8 +30,7 @@ class ActionFactory(RobotActionFactory):
     def __init__(self, context: RobotActionContext):
         RobotActionFactory.__init__(self, context)
         self.supported_actions = [
-            'hello_world',
-            'delayed_hello_world'
+            'go_to_charger'
         ]
 
     def supports_action(self, category: str) -> bool:
@@ -48,53 +47,9 @@ class ActionFactory(RobotActionFactory):
         # See https://github.com/open-rmf/rmf_ros2/pull/392 for more info.
         # execution.set_automatic_cancel(False)
         match category:
-            case 'hello_world':
-                return HelloWorld(description, execution, self.context)
-            case 'delayed_hello_world':
-                return DelayedHelloWorld(description, execution, self.context)
+            case 'go_to_charger':
+                return GoToCharger(description, execution, self.context)
 
-
-# The hello_world custom action parses the description for a user name,
-# performs logging, and completes the action immediately.
-class HelloWorld(RobotAction):
-
-    def __init__(
-        self,
-        description: dict,
-        execution,
-        context: RobotActionContext
-    ):
-        RobotAction.__init__(self, context, execution)
-
-        self.context.node.get_logger().info(
-            f'New HelloWorld requested for robot [{self.context.robot_name}]'
-        )
-        self.description = description
-        self.user = None
-
-        # Enum used for tracking whether this action has been completed
-        self.state = RobotActionState.IN_PROGRESS
-
-    def update_action(self) -> RobotActionState:
-        if self.state == RobotActionState.COMPLETED:
-            return self.state
-
-        # Perform the action if it has not been handled yet, update the state
-        self.context.node.get_logger().info('Hello, world!')
-        current_pose = self.context.get_pose()
-        if current_pose is None:
-            self.context.node.get_logger().error('Unable to get pose!')
-        else:
-            self.context.node.get_logger().info(f'Current pose: {current_pose}')
-
-        # Use information in perform_action description for custom logic
-        user = self.description.get('user')
-        if user is not None:
-            self.user = str(user)
-            self.context.node.get_logger().info(f'Hello, {self.user} too!')
-
-        self.state = RobotActionState.COMPLETED
-        return self.state
 
 
 # The delayed_hello_world custom action parses the description for a user
@@ -103,7 +58,7 @@ class HelloWorld(RobotAction):
 # Empty topic with topic name `cancel_delayed_hello_world`.
 # Cancel the action with the following command
 # ros2 topic pub --once  /cancel_delayed_hello_world std_msgs/msg/Empty "{}"
-class DelayedHelloWorld(RobotAction):
+class GoToCharger(RobotAction):
 
     def __init__(
         self,
@@ -114,7 +69,7 @@ class DelayedHelloWorld(RobotAction):
         RobotAction.__init__(self, context, execution)
 
         self.context.node.get_logger().info(
-            'New DelayedHelloWorld requested for robot '
+            'New GoToCharger requested for robot '
             f'[{self.context.robot_name}]'
         )
         self.description = description
@@ -126,13 +81,13 @@ class DelayedHelloWorld(RobotAction):
         self.state = RobotActionState.IN_PROGRESS
 
         # Custom cancellation interaction
-        self.cancel_topic = 'cancel_delayed_hello_world'
+        self.cancel_topic = 'cancel_go_to_charger'
         self.cancel_sub = None
 
     def _cancel_action(self, msg: Empty):
         self.state = RobotActionState.CANCELING
         self.context.node.get_logger().info(
-            'Received custom cancel command delayed_hello_world action for '
+            'Received custom cancel command go_to_charger action for '
             f'robot [{self.context.robot_name}]'
         )
 
@@ -146,7 +101,7 @@ class DelayedHelloWorld(RobotAction):
         self.cancel_task_of_action(
             _cancel_success,
             _cancel_fail,
-            'Custom cancel behavior of delayed_hello_world action'
+            'Custom cancel behavior of go_to_charger action'
         )
 
     def update_action(self) -> RobotActionState:
@@ -179,16 +134,13 @@ class DelayedHelloWorld(RobotAction):
         current_millis = round(time.time() * 1000)
         if current_millis - self.start_millis > self.wait_duration_sec * 1000:
             # Perform the action if it has not been handled yet, update the state
-            self.context.node.get_logger().info('Hello, world!')
+            self.context.node.get_logger().info('Going to charger!')
             current_pose = self.context.get_pose()
             if current_pose is None:
                 self.context.node.get_logger().error('Unable to get pose!')
             else:
                 self.context.node.get_logger().info(
                     f'Current pose: {current_pose}')
-
-            if self.user is not None:
-                self.context.node.get_logger().info(f'Hello, {self.user} too!')
 
             self.state = RobotActionState.COMPLETED
             return self.state
