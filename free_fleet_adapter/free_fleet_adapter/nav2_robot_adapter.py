@@ -80,41 +80,29 @@ class Nav2TfHandler:
         self.tf_buffer = tf_buffer
         self.robot_frame = robot_frame
         self.map_frame = map_frame
+        self.robot_pose = None
 
-        def _tf_callback(sample: zenoh.Sample):
+        def _robot_pose_callback(sample: zenoh.Sample):
             try:
-                transform = TFMessage.deserialize(sample.payload.to_bytes())
+                robot_pose = GeometryMsgs_Pose.deserialize(sample.payload.to_bytes())
+                self.robot_pose = robot_pose
             except Exception as e:
                 self.node.get_logger().debug(
-                    f'Failed to deserialize TF payload: {type(e)}: {e}'
+                    f'Failed to deserialize robot pose payload: {type(e)}: {e}'
                 )
-                return None
-            for zt in transform.transforms:
-                t = transform_stamped_to_ros2_msg(zt)
-                t.header.frame_id = namespacify(zt.header.frame_id,
-                                                self.robot_name)
-                t.child_frame_id = namespacify(zt.child_frame_id,
-                                               self.robot_name)
-                self.tf_buffer.set_transform(
-                    t, f'{self.robot_name}_TfListener')
+                return
 
         self.tf_sub = self.zenoh_session.declare_subscriber(
-            namespacify('tf', self.robot_name),
-            _tf_callback
+            namespacify('robot_pose', self.robot_name),
+            _robot_pose_callback
         )
 
-    def get_transform(self) -> TransformStamped | None:
+    def get_robot_pose(self) -> GeometryMsgs_Pose | None:
         try:
-            transform = self.tf_buffer.lookup_transform(
-                namespacify(self.map_frame, self.robot_name),
-                namespacify(self.robot_frame, self.robot_name),
-                rclpy.time.Time()
-                )
-            return transform
+            return self.robot_pose
         except Exception as err:
             self.node.get_logger().info(
-                f'Unable to get transform between {self.robot_frame} '
-                f'and {self.map_frame}: {type(err)}: {err}'
+                f'Unable to get robot pose: {type(err)}: {err}'
             )
         return None
 
@@ -330,23 +318,23 @@ class Nav2RobotAdapter(RobotAdapter):
         return self.map_name
 
     def get_pose(self) -> Annotated[list[float], 3] | None:
-        transform = self.tf_handler.get_transform()
-        if transform is None:
+        robot_pose = self.tf_handler.get_robot_pose()
+        if robot_pose is None:
             error_message = \
                 f'Failed to update robot [{self.name}]: Unable to get ' \
-                f'transform between {self.robot_frame} and {self.map_frame}'
+                f'robot pose'
             self.node.get_logger().info(error_message)
             return None
 
         orientation = euler_from_quaternion([
-            transform.transform.rotation.x,
-            transform.transform.rotation.y,
-            transform.transform.rotation.z,
-            transform.transform.rotation.w
+            robot_pose.orientation.x,
+            robot_pose.orientation.y,
+            robot_pose.orientation.z,
+            robot_pose.orientation.w
         ])
         robot_pose = [
-            transform.transform.translation.x,
-            transform.transform.translation.y,
+            robot_pose.position.x,
+            robot_pose.position.y,
             orientation[2]
         ]
         return robot_pose

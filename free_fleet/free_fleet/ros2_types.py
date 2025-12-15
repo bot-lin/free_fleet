@@ -237,10 +237,6 @@ class Orientation(IdlStruct):
     z: pycdr2.types.float64
     w: pycdr2.types.float64
 
-@dataclass
-class Pose(IdlStruct):
-    position: Position
-    orientation: Orientation
 
 @dataclass
 class LoadMap_Request(IdlStruct):
@@ -252,7 +248,7 @@ class MapMetaData(IdlStruct):
     resolution: pycdr2.types.float32
     width: pycdr2.types.uint32
     height: pycdr2.types.uint32
-    origin: Pose
+    origin: GeometryMsgs_Pose
 
 @dataclass
 class OccupancyGrid(IdlStruct):
