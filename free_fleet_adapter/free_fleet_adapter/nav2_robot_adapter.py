@@ -157,6 +157,7 @@ class Nav2RobotAdapter(RobotAdapter):
         # TODO(ac): Only use full battery if sim is indicated
         self.battery_soc = 1.0
         self.robot_pose = None
+        self._last_robot_pose_log_time = 0.0
 
         self.replan_counts = 0
         self.nav_issue_ticket = None
@@ -173,7 +174,22 @@ class Nav2RobotAdapter(RobotAdapter):
             self.battery_soc = battery_state.percentage
         
         def _robot_pose_callback(sample: zenoh.Sample):
-            self.robot_pose = GeometryMsgs_Pose.deserialize(sample.payload.to_bytes())            
+            # add throttle to avoid blocking on console I/O  
+            try:
+                robot_pose = GeometryMsgs_Pose.deserialize(sample.payload.to_bytes())
+                self.robot_pose = robot_pose
+            except Exception as e:
+                self.node.get_logger().debug(
+                    f'Failed to deserialize robot pose payload: {type(e)}: {e}'
+                )
+                return
+            now = time.monotonic()
+            if now - self._last_robot_pose_log_time >= 2.0:
+                self._last_robot_pose_log_time = now
+                self.node.get_logger().info(
+                    f'Received robot pose for [{self.name}] from keyexpr [{sample.key_expr}]: '
+                    f'({robot_pose.position.x:.3f}, {robot_pose.position.y:.3f})'
+                ) 
 
         self.battery_state_sub = self.zenoh_session.declare_subscriber(
             namespacify('battery/state', name),
