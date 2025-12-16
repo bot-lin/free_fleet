@@ -16,6 +16,7 @@
 
 import importlib
 import traceback
+import time
 from typing import Annotated
 
 from free_fleet.convert import transform_stamped_to_ros2_msg
@@ -81,6 +82,7 @@ class Nav2TfHandler:
         self.robot_frame = robot_frame
         self.map_frame = map_frame
         self.robot_pose = None
+        self._last_pose_log_time = 0.0
 
         def _robot_pose_callback(sample: zenoh.Sample):
             try:
@@ -91,36 +93,24 @@ class Nav2TfHandler:
                     f'Failed to deserialize robot pose payload: {type(e)}: {e}'
                 )
                 return
-            # Helpful debug to confirm we are receiving updates continuously
-            try:
-                key = str(sample.key_expr)
-            except Exception:
-                key = '<unknown>'
-            self.node.get_logger().info(
-                f'Received robot_pose for [{self.robot_name}] from keyexpr [{key}]: '
-                f'({robot_pose.position.x:.3f}, {robot_pose.position.y:.3f})'
-            )
+            # Throttled debug logging to avoid blocking on console I/O
+            now = time.monotonic()
+            if now - self._last_pose_log_time >= 2.0:
+                self._last_pose_log_time = now
+                try:
+                    key = str(sample.key_expr)
+                except Exception:
+                    key = '<unknown>'
+                self.node.get_logger().info(
+                    f'Received robot_pose for [{self.robot_name}] from keyexpr [{key}]: '
+                    f'({robot_pose.position.x:.3f}, {robot_pose.position.y:.3f})'
+                )
 
-        # NOTE: Depending on zenoh-bridge-ros2dds configuration, keyexprs may
-        # include additional namespaces or a leading '/'. To make this robust
-        # across deployments, subscribe to both the expected keyexpr and a
-        # wildcard catch-all, and filter by robot_name.
+        # Subscribe to robot pose from Zenoh. Keyexpr is namespaced by robot_name.
         self._robot_pose_keyexpr = namespacify('robot_pose', self.robot_name)
         self.pose_sub = self.zenoh_session.declare_subscriber(
             self._robot_pose_keyexpr,
             _robot_pose_callback
-        )
-
-        def _robot_pose_wildcard_callback(sample: zenoh.Sample):
-            # Filter samples to only accept those that are intended for this robot
-            key = str(sample.key_expr)
-            if self.robot_name not in key or not key.endswith('robot_pose'):
-                return
-            _robot_pose_callback(sample)
-
-        self.pose_sub_wildcard = self.zenoh_session.declare_subscriber(
-            '**/robot_pose',
-            _robot_pose_wildcard_callback
         )
 
     def get_robot_pose(self) -> GeometryMsgs_Pose | None:
