@@ -25,7 +25,7 @@ from free_fleet_adapter.nav2_robot_adapter import Nav2RobotAdapter
 import nudged
 import rclpy
 from rclpy.duration import Duration
-from rclpy.executors import MultiThreadedExecutor
+from rclpy.experimental import EventsExecutor
 import rclpy.node
 from rclpy.parameter import Parameter
 import rmf_adapter
@@ -239,7 +239,7 @@ def start_fleet_adapter(
     update_thread.start()
 
     # Create executor for the command handle node
-    rclpy_executor = MultiThreadedExecutor()
+    rclpy_executor = EventsExecutor()
     rclpy_executor.add_node(node)
 
     # Start the fleet adapter
@@ -265,7 +265,6 @@ def parallel(f):
 @parallel
 def update_robot(robot: Nav1RobotAdapter | Nav2RobotAdapter):
     robot_pose = robot.get_pose()
-    robot.node.get_logger().info(f'Robot pose: {robot_pose}')
     if robot_pose is None:
         robot.node.get_logger().info(f'Failed to pose of robot [{robot.name}]')
         return None
