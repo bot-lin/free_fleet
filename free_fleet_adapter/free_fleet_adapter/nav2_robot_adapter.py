@@ -96,7 +96,7 @@ class Nav2TfHandler:
                 key = str(sample.key_expr)
             except Exception:
                 key = '<unknown>'
-            self.node.get_logger().debug(
+            self.node.get_logger().info(
                 f'Received robot_pose for [{self.robot_name}] from keyexpr [{key}]: '
                 f'({robot_pose.position.x:.3f}, {robot_pose.position.y:.3f})'
             )
