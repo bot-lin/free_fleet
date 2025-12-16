@@ -156,6 +156,7 @@ class Nav2RobotAdapter(RobotAdapter):
 
         # TODO(ac): Only use full battery if sim is indicated
         self.battery_soc = 1.0
+        self.robot_pose = None
 
         self.replan_counts = 0
         self.nav_issue_ticket = None
@@ -165,24 +166,23 @@ class Nav2RobotAdapter(RobotAdapter):
         # Maps plugin name to action factory
         self.action_factories = {}
 
-        self.tf_handler = Nav2TfHandler(
-            self.name,
-            self.zenoh_session,
-            self.tf_buffer,
-            self.node,
-            robot_frame=self.robot_frame,
-            map_frame=self.map_frame
-        )
-
         def _battery_state_callback(sample: zenoh.Sample):
             battery_state = SensorMsgs_BatteryState.deserialize(
                 sample.payload.to_bytes()
             )
             self.battery_soc = battery_state.percentage
+        
+        def _robot_pose_callback(sample: zenoh.Sample):
+            self.robot_pose = GeometryMsgs_Pose.deserialize(sample.payload.to_bytes())            
 
         self.battery_state_sub = self.zenoh_session.declare_subscriber(
             namespacify('battery/state', name),
             _battery_state_callback
+        )
+
+        self.robot_pose_sub = self.zenoh_session.declare_subscriber(
+            namespacify('robot_pose', name),
+            _robot_pose_callback
         )
 
         def _feedback_callback(sample: zenoh.Sample):
@@ -334,7 +334,7 @@ class Nav2RobotAdapter(RobotAdapter):
         return self.map_name
 
     def get_pose(self) -> Annotated[list[float], 3] | None:
-        robot_pose = self.tf_handler.get_robot_pose()
+        robot_pose = self.robot_pose
         if robot_pose is None:
             error_message = \
                 f'Failed to update robot [{self.name}]: Unable to get ' \
