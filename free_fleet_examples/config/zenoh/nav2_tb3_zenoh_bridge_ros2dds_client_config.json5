@@ -3,11 +3,16 @@
     ros2dds: {
       namespace: "/nav2_tb3",
       allow: {
-        publishers: [".*/tf", ".*/battery_state"],
+        // Topics published by the robot-side bridge (ROS -> Zenoh)
+        // free_fleet_adapter may subscribe to robot_pose if configured
+        publishers: [".*/tf", ".*/battery_state", ".*/robot_pose"],
         subscribers: [],
         service_servers: [],
         service_clients: [],
-        action_servers: [".*/navigate_to_pose"],
+        // Nav2 action servers that we want to bridge over Zenoh
+        // - NavigateToPose is the default nav2 action
+        // - NavigateThroughPoses is used by free_fleet_adapter Nav2RobotAdapter
+        action_servers: [".*/navigate_to_pose", ".*/navigate_through_poses"],
         action_clients: [],
       },
       pub_max_frequencies: [".*/battery_state=1"],

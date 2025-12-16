@@ -91,10 +91,36 @@ class Nav2TfHandler:
                     f'Failed to deserialize robot pose payload: {type(e)}: {e}'
                 )
                 return
+            # Helpful debug to confirm we are receiving updates continuously
+            try:
+                key = str(sample.key_expr)
+            except Exception:
+                key = '<unknown>'
+            self.node.get_logger().debug(
+                f'Received robot_pose for [{self.robot_name}] from keyexpr [{key}]: '
+                f'({robot_pose.position.x:.3f}, {robot_pose.position.y:.3f})'
+            )
 
-        self.tf_sub = self.zenoh_session.declare_subscriber(
-            namespacify('robot_pose', self.robot_name),
+        # NOTE: Depending on zenoh-bridge-ros2dds configuration, keyexprs may
+        # include additional namespaces or a leading '/'. To make this robust
+        # across deployments, subscribe to both the expected keyexpr and a
+        # wildcard catch-all, and filter by robot_name.
+        self._robot_pose_keyexpr = namespacify('robot_pose', self.robot_name)
+        self.pose_sub = self.zenoh_session.declare_subscriber(
+            self._robot_pose_keyexpr,
             _robot_pose_callback
+        )
+
+        def _robot_pose_wildcard_callback(sample: zenoh.Sample):
+            # Filter samples to only accept those that are intended for this robot
+            key = str(sample.key_expr)
+            if self.robot_name not in key or not key.endswith('robot_pose'):
+                return
+            _robot_pose_callback(sample)
+
+        self.pose_sub_wildcard = self.zenoh_session.declare_subscriber(
+            '**/robot_pose',
+            _robot_pose_wildcard_callback
         )
 
     def get_robot_pose(self) -> GeometryMsgs_Pose | None:
@@ -357,9 +383,24 @@ class Nav2RobotAdapter(RobotAdapter):
             payload=req.serialize(),
             timeout=self.service_call_timeout_sec
         )
+        replies = list(replies)
+        if len(replies) == 0:
+            self.node.get_logger().debug(
+                'navigate_through_poses get_result: no replies (timeout?)'
+            )
+            return False
+
         for reply in replies:
             try:
-                # Deserialize the response
+                if not getattr(reply, 'ok', None):
+                    err_payload = None
+                    if getattr(reply, 'err', None) and getattr(reply.err, 'payload', None):
+                        err_payload = reply.err.payload.to_string()
+                    self.node.get_logger().debug(
+                        f'navigate_through_poses get_result error reply: {err_payload}'
+                    )
+                    continue
+
                 rep = NavigateThroughPoses_GetResult_Response.deserialize(
                     reply.ok.payload.to_bytes()
                 )
@@ -404,9 +445,13 @@ class Nav2RobotAdapter(RobotAdapter):
                         self.update_handle.more().replan()
                         return False
             except Exception as e:
+                err_payload = None
+                if getattr(reply, 'err', None) and getattr(reply.err, 'payload', None):
+                    err_payload = reply.err.payload.to_string()
                 self.node.get_logger().debug(
-                    f'Received (ERROR: "{reply.err.payload.to_string()}"): '
-                    f'{type(e)}: {e}')
+                    f'navigate_through_poses get_result exception. '
+                    f'err={err_payload} exc={type(e)}: {e}'
+                )
                 continue
 
     # TODO(ac): issue ticket can be more generic for execute actions too
@@ -533,15 +578,40 @@ class Nav2RobotAdapter(RobotAdapter):
             planner_id='GridBased',
             controller_id='FollowPath'
         )
-
+        
+        keyexpr = namespacify('navigate_through_poses/_action/send_goal', self.name)
         replies = self.zenoh_session.get(
-            namespacify('navigate_through_poses/_action/send_goal', self.name),
+            keyexpr,
             payload=req.serialize(),
             timeout=self.service_call_timeout_sec
         )
 
+        replies = list(replies)
+        if len(replies) == 0:
+            self.replan_counts += 1
+            self.node.get_logger().error(
+                f'Navigation send_goal got no replies on [{keyexpr}] '
+                f'(timeout?), replan count [{self.replan_counts}]'
+            )
+            if self.update_handle is not None:
+                self.update_handle.more().replan()
+            return
+
         for reply in replies:
             try:
+                if not getattr(reply, 'ok', None):
+                    err_payload = None
+                    if getattr(reply, 'err', None) and getattr(reply.err, 'payload', None):
+                        err_payload = reply.err.payload.to_string()
+                    self.replan_counts += 1
+                    self.node.get_logger().error(
+                        f'Navigation send_goal failed on [{keyexpr}], '
+                        f'error={err_payload}, replan count [{self.replan_counts}]'
+                    )
+                    if self.update_handle is not None:
+                        self.update_handle.more().replan()
+                    return
+
                 rep = NavigateThroughPoses_SendGoal_Response.deserialize(
                     reply.ok.payload.to_bytes())
                 if rep.accepted:
@@ -566,7 +636,9 @@ class Nav2RobotAdapter(RobotAdapter):
                 self.update_handle.more().replan()
                 return
             except Exception as e:
-                payload = reply.err.payload.to_string()
+                payload = None
+                if getattr(reply, 'err', None) and getattr(reply.err, 'payload', None):
+                    payload = reply.err.payload.to_string()
                 self.node.get_logger().error(
                     f'Received (ERROR: {payload}: {type(e)}: {e})'
                 )
