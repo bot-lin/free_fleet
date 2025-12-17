@@ -14,9 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from free_fleet.ros1_types import ROS1_STORE, TFMessage
 from free_fleet.utils import (
-    get_zenoh_name_of_ros1_topic,
     make_nav2_cancel_all_goals_request,
     namespacify
 )
@@ -35,14 +33,6 @@ def test_make_nav2_cancel_all_goals_request():
     assert request.goal_info.stamp.nanosec == 0
 
 
-def test_get_zenoh_name_of_ros1_topic():
-    test_topic = '/test/topic'
-    zenoh_topic = get_zenoh_name_of_ros1_topic(
-        ROS1_STORE,
-        test_topic,
-        TFMessage.type_name
-    )
-    assert zenoh_topic.endswith(test_topic)
-
-    topic_parts = zenoh_topic.split('/')
-    assert len(topic_parts) == 4
+#
+# NOTE: Zenoh-related utilities were removed when the repository migrated to
+# pure ROS2 communication for fleet adapters.

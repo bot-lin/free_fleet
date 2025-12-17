@@ -20,7 +20,6 @@ import sys
 import threading
 import time
 
-from free_fleet_adapter.nav1_robot_adapter import Nav1RobotAdapter
 from free_fleet_adapter.nav2_robot_adapter import Nav2RobotAdapter
 import nudged
 import rclpy
@@ -34,7 +33,6 @@ import rmf_adapter.easy_full_control as rmf_easy
 import rmf_adapter.fleet_update_handle as rmf_fleet
 from tf2_ros import Buffer
 import yaml
-import zenoh
 
 
 # ------------------------------------------------------------------------------
@@ -65,7 +63,6 @@ def compute_transforms(level, coords, node=None):
 def start_fleet_adapter(
     config_path: str,
     nav_graph_path: str,
-    zenoh_config_path: str | None,
     server_uri: str | None,
     use_sim_time: bool
 ):
@@ -113,40 +110,6 @@ def start_fleet_adapter(
         'Failed to create EasyFullControl fleet, \
         please verify that the fleet config is valid.'
 
-    # Initialize zenoh
-    zenoh_config = zenoh.Config.from_file(zenoh_config_path) \
-        if zenoh_config_path is not None else zenoh.Config()
-
-    # Automatically add robot IPs to Zenoh connect endpoints if available
-    endpoints = []
-    if 'rmf_fleet' in config_yaml and 'robots' in config_yaml['rmf_fleet']:
-        for robot_name, robot_data in config_yaml['rmf_fleet']['robots'].items():
-            if 'network_ip' in robot_data:
-                ip = robot_data['network_ip']
-                # Assume default Zenoh port 7447 if not specified, protocol tcp
-                endpoint = f"tcp/{ip}:7447"
-                endpoints.append(endpoint)
-                node.get_logger().info(f"Adding Zenoh endpoint for robot {robot_name}: {endpoint}")
-
-    if endpoints:
-        try:
-            # zenoh.Config.insert_json5 works by inserting a JSON5 string at the specified key.
-            # For a list, we need to format it as a JSON array string.
-            # E.g. "['tcp/192.168.0.1:7447', 'tcp/192.168.0.2:7447']"
-            # Note: This will overwrite existing endpoints if any were loaded from file.
-            # If we want to append, we'd need to read the existing ones first, which is tricky
-            # without a clear get API in this context. Assuming we want to ensure these are connected.
-            # Zenoh supports multiple calls to insert_json5 for different keys, but for the same key
-            # it might replace. However, 'connect/endpoints' is a list.
-            # Constructing the full list string:
-            endpoints_json_str = str(endpoints).replace("'", '"') # JSON uses double quotes
-            zenoh_config.insert_json5("connect/endpoints", endpoints_json_str)
-            node.get_logger().info(f"Configured Zenoh connect endpoints: {endpoints_json_str}")
-        except Exception as e:
-             node.get_logger().warn(f"Failed to configure Zenoh endpoints: {e}")
-    zenoh_config.insert_json5("scouting/multicast/enabled", "false")
-    zenoh_session = zenoh.open(zenoh_config)
-
     # Set up tf2 buffer
     tf_buffer = Buffer()
 
@@ -192,24 +155,13 @@ def start_fleet_adapter(
                 robot_config_yaml,
                 plugin_config,
                 node,
-                zenoh_session,
                 fleet_handle,
                 fleet_config,
                 tf_buffer
             )
-        elif nav_stack == 1:
-            robots[robot_name] = Nav1RobotAdapter(
-                robot_name,
-                robot_config,
-                robot_config_yaml,
-                node,
-                zenoh_session,
-                fleet_handle,
-                tf_buffer
-            )
         else:
             error_message = \
-                'Navigation stack can only be 1 (experimental) or 2'
+                'Navigation stack can only be 2 (ROS2 Nav2) when Zenoh is disabled'
             node.get_logger().error(error_message)
             raise RuntimeError(error_message)
 
@@ -248,7 +200,6 @@ def start_fleet_adapter(
     # Shutdown
     node.destroy_node()
     rclpy_executor.shutdown()
-    zenoh_session.close()
 
 
 # Parallel processing solution derived from
@@ -263,7 +214,7 @@ def parallel(f):
 
 
 @parallel
-def update_robot(robot: Nav1RobotAdapter | Nav2RobotAdapter):
+def update_robot(robot: Nav2RobotAdapter):
     robot_pose = robot.get_pose()
     if robot_pose is None:
         robot.node.get_logger().info(f'Failed to pose of robot [{robot.name}]')
@@ -298,19 +249,11 @@ def main(argv=sys.argv):
                              'task information.')
     parser.add_argument('-sim', '--use_sim_time', action='store_true',
                         help='Use sim time, default: false')
-    parser.add_argument(
-        '--zenoh-config',
-        type=str,
-        help='Path to custom zenoh configuration file to be used, if not '
-        'provided the default config will be used'
-    )
     args = parser.parse_args(args_without_ros[1:])
 
     start_fleet_adapter(
         config_path=args.config_file,
         nav_graph_path=args.nav_graph,
-        zenoh_config_path=args.zenoh_config
-        if args.zenoh_config != '' else None,
         server_uri=args.server_uri if args.server_uri != '' else None,
         use_sim_time=args.use_sim_time
     )

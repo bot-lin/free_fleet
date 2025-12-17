@@ -15,64 +15,48 @@
 # limitations under the License.
 
 import importlib
-import traceback
-import time
 import threading
+import time
+import traceback
 from typing import Annotated
 
-from free_fleet.convert import transform_stamped_to_ros2_msg
-from free_fleet.ros2_types import (
-    ActionMsgs_CancelGoal_Response,
-    GeometryMsgs_Point,
-    GeometryMsgs_Pose,
-    GeometryMsgs_PoseStamped,
-    GeometryMsgs_Quaternion,
-    GoalStatus,
-    Header,
-    NavigateToPose_Feedback,
-    NavigateToPose_GetResult_Request,
-    NavigateToPose_GetResult_Response,
-    NavigateToPose_SendGoal_Request,
-    NavigateToPose_SendGoal_Response,
-    NavigateThroughPoses_Feedback,
-    NavigateThroughPoses_GetResult_Request,
-    NavigateThroughPoses_GetResult_Response,
-    NavigateThroughPoses_SendGoal_Request,
-    NavigateThroughPoses_SendGoal_Response,
-    LoadMap_Request,
-    LoadMap_Response,
-    SensorMsgs_BatteryState,
-    TFMessage,
-    Time,
-)
-from free_fleet.utils import (
-    make_nav2_cancel_all_goals_request,
-    namespacify,
-)
-from free_fleet_adapter.action import (
-    RobotActionContext,
-    RobotActionState,
-)
-from free_fleet_adapter.robot_adapter import (
-    ExecutionFeedback,
-    ExecutionHandle,
-    RobotAdapter,
-)
-
-from geometry_msgs.msg import Pose as RosPose
-from geometry_msgs.msg import TransformStamped
-import numpy as np
 import rclpy
+from rclpy.action import ActionClient
+from rclpy.qos import qos_profile_sensor_data
+
+from action_msgs.msg import GoalStatus as RosGoalStatus
+from geometry_msgs.msg import Pose as RosPose
+from geometry_msgs.msg import PoseStamped as RosPoseStamped
+from nav2_msgs.action import NavigateThroughPoses
+from nav2_msgs.srv import LoadMap
+from sensor_msgs.msg import BatteryState as RosBatteryState
+from tf_transformations import euler_from_quaternion, quaternion_from_euler
+
 import rmf_adapter.easy_full_control as rmf_easy
 from rmf_adapter.robot_update_handle import (
     ActionExecution,
     ActivityIdentifier,
     Tier,
 )
-from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import BatteryState as RosBatteryState
-from tf_transformations import euler_from_quaternion, quaternion_from_euler
-import zenoh
+
+from free_fleet.utils import namespacify
+from free_fleet_adapter.action import RobotActionContext, RobotActionState
+from free_fleet_adapter.robot_adapter import (
+    ExecutionFeedback,
+    ExecutionHandle,
+    RobotAdapter,
+)
+
+
+def _wait_future(fut, timeout_sec: float) -> bool:
+    """等待 future 完成，不做 spin（避免嵌套 spin/抢占 executor）。"""
+    done_evt = threading.Event()
+
+    def _mark_done(_):
+        done_evt.set()
+
+    fut.add_done_callback(_mark_done)
+    return done_evt.wait(timeout=timeout_sec)
 
 
 class Nav2RobotAdapter(RobotAdapter):
@@ -84,189 +68,96 @@ class Nav2RobotAdapter(RobotAdapter):
         robot_config_yaml,
         plugin_config: dict | None,
         node,
-        zenoh_session,
         fleet_handle,
         fleet_config: rmf_easy.FleetConfiguration | None,
-        tf_buffer
+        tf_buffer,
     ):
-        RobotAdapter.__init__(self, name, node, fleet_handle)
+        super().__init__(name, node, fleet_handle)
 
         self.configuration = configuration
         self.robot_config_yaml = robot_config_yaml
-        self.zenoh_session = zenoh_session
         self.fleet_config = fleet_config
         self.tf_buffer = tf_buffer
 
         self.exec_handle: ExecutionHandle | None = None
-        self.map_name = self.robot_config_yaml['initial_map']
-        default_map_frame = 'map'
-        default_robot_frame = 'base_footprint'
-        self.map_frame = self.robot_config_yaml.get('map_frame', default_map_frame)
-        self.robot_frame = self.robot_config_yaml.get('robot_frame', default_robot_frame)
-        self.service_call_timeout_sec = \
-            self.robot_config_yaml.get('service_call_timeout_sec', None)
+        self.map_name = self.robot_config_yaml["initial_map"]
+        self.map_frame = self.robot_config_yaml.get("map_frame", "map")
+        self.robot_frame = self.robot_config_yaml.get("robot_frame", "base_footprint")
 
-        # TODO(ac): Only use full battery if sim is indicated
+        self.service_call_timeout_sec = float(
+            self.robot_config_yaml.get("service_call_timeout_sec", 5.0)
+        )
+
+        # Robot state
         self.battery_soc = 1.0
         self.robot_pose = None
-        # Robot pose reception diagnostics (ROS2 subscription callbacks)
-        self._pose_lock = threading.Lock()
-        self._pose_rx_count = 0
-        self._pose_rx_last_mono: float | None = None
-        self._pose_report_last_mono: float = time.monotonic()
-        self._pose_report_last_count: int = 0
-        self._battery_rx_count = 0
-        self._battery_rx_last_mono: float | None = None
+        self._state_lock = threading.Lock()
 
         self.replan_counts = 0
         self.nav_issue_ticket = None
 
-        # Maps action name to plugin name
-        self.action_to_plugin_name = {}
-        # Maps plugin name to action factory
+        # Plugin actions
+        self.action_to_plugin_name: dict[str, str] = {}
         self.action_factories = {}
 
-        # Prefer ROS 2 subscriptions for robot pose and battery state (lower
-        # latency and avoids Zenoh callback/GIL burstiness).
-        def _battery_state_ros_callback(msg: RosBatteryState):
-            now = time.monotonic()
-            # sensor_msgs/BatteryState.percentage is typically [0.0, 1.0]
-            soc = float(msg.percentage) if msg.percentage == msg.percentage else self.battery_soc
-            if soc < 0.0:
-                soc = 0.0
-            if soc > 1.0:
-                # Some stacks publish [0, 100]; clamp to 1.0 to avoid breaking RMF
-                soc = soc / 100.0 if soc <= 100.0 else 1.0
+        # ROS2 subscriptions (absolute topics)
+        self._ros_robot_pose_topic = f'/{namespacify("robot_pose", self.name)}'
+        self._ros_battery_topic = f'/{namespacify("battery/state", self.name)}'
 
-            with self._pose_lock:
-                self.battery_soc = soc
-                self._battery_rx_count += 1
-                self._battery_rx_last_mono = now
-
-        def _robot_pose_ros_callback(msg: RosPose):
-            now = time.monotonic()
-            robot_pose = GeometryMsgs_Pose(
-                position=GeometryMsgs_Point(
-                    x=float(msg.position.x),
-                    y=float(msg.position.y),
-                    z=float(msg.position.z),
-                ),
-                orientation=GeometryMsgs_Quaternion(
-                    x=float(msg.orientation.x),
-                    y=float(msg.orientation.y),
-                    z=float(msg.orientation.z),
-                    w=float(msg.orientation.w),
-                ),
-            )
-            with self._pose_lock:
-                self.robot_pose = robot_pose
-                self._pose_rx_count += 1
-                self._pose_rx_last_mono = now
-
-        def _report_robot_pose_stats():
-            now = time.monotonic()
-            with self._pose_lock:
-                count = self._pose_rx_count
-                last_mono = self._pose_rx_last_mono
-                pose = self.robot_pose
-                batt_count = self._battery_rx_count
-                batt_last = self._battery_rx_last_mono
-                soc = self.battery_soc
-
-            dt = max(1e-6, now - self._pose_report_last_mono)
-            dcount = count - self._pose_report_last_count
-            hz = float(dcount) / dt
-            age = None if last_mono is None else (now - last_mono)
-
-            self._pose_report_last_mono = now
-            self._pose_report_last_count = count
-
-            if pose is None or age is None:
-                self.node.get_logger().info(
-                    f'robot_pose rx: no samples yet (total={count})'
-                )
-                return
-
-            batt_age = None if batt_last is None else (now - batt_last)
-            self.node.get_logger().info(
-                f'robot_pose rx: {hz:.2f} Hz, age={age:.2f}s, total={count}, '
-                f'pose=({pose.position.x:.3f}, {pose.position.y:.3f}); '
-                f'battery rx_total={batt_count}, age={batt_age if batt_age is not None else -1:.2f}s, soc={soc:.3f}'
-            )
-
-        # Periodic reporting so we can see real receive rate without spamming logs
-        self._pose_report_timer = self.node.create_timer(
-            5.0, _report_robot_pose_stats
-        )
-
-        # ROS2 topics (absolute): /<robot_name>/robot_pose and /<robot_name>/battery/state
-        self._ros_robot_pose_topic = f'/{namespacify("robot_pose", name)}'
-        self._ros_battery_topic = f'/{namespacify("battery/state", name)}'
         self.robot_pose_sub = self.node.create_subscription(
             RosPose,
             self._ros_robot_pose_topic,
-            _robot_pose_ros_callback,
+            self._robot_pose_ros_callback,
             qos_profile_sensor_data,
         )
         self.battery_state_sub = self.node.create_subscription(
             RosBatteryState,
             self._ros_battery_topic,
-            _battery_state_ros_callback,
+            self._battery_state_ros_callback,
             qos_profile_sensor_data,
         )
 
-        def _feedback_callback(sample: zenoh.Sample):
-            if self.exec_handle is None:
-                return
+        # ROS2 Nav2 Action + Services (namespaced by robot name)
+        self._nav_action_name = f'/{namespacify("navigate_through_poses", self.name)}'
+        self._nav_action_client = ActionClient(
+            self.node, NavigateThroughPoses, self._nav_action_name
+        )
 
-            # TODO(ac): ideally we update the exec with feedback for all types
-            # of actions and executions. For now, we support only NavigateToPose
-            if self.exec_handle.goal_id is None:
-                return
+        self._map_server_load_map_srv = f'/{namespacify("map_server/load_map", self.name)}'
+        self._mask_server_load_map_srv = f'/{namespacify("filter_mask_server/load_map", self.name)}'
+        self._map_load_client = self.node.create_client(
+            LoadMap, self._map_server_load_map_srv
+        )
+        self._mask_load_client = self.node.create_client(
+            LoadMap, self._mask_server_load_map_srv
+        )
 
-            feedback = NavigateThroughPoses_Feedback.deserialize(
-                sample.payload.to_bytes())
-            self.exec_handle.last_received_feedback = ExecutionFeedback(
-                feedback,
-                self.node.get_clock().now().seconds_nanoseconds()[0])
-
-        self.feedback_callback_sub = self.zenoh_session.declare_subscriber(
-            namespacify('navigate_through_poses/_action/feedback', name),
-            _feedback_callback)
-
-        # Initialize robot
-        init_timeout_sec = self.robot_config_yaml.get('init_timeout_sec', 10)
-        self.node.get_logger().info(f'Initializing robot [{self.name}]...')
+        # Initialize robot pose
+        init_timeout_sec = float(self.robot_config_yaml.get("init_timeout_sec", 10))
+        self.node.get_logger().info(f"Initializing robot [{self.name}]...")
         init_robot_pose = rclpy.Future()
 
         def _get_init_pose():
-            robot_pose = self.get_pose()
-            if robot_pose is not None:
-                init_robot_pose.set_result(robot_pose)
-                init_robot_pose.done()
+            pose = self.get_pose()
+            if pose is not None and not init_robot_pose.done():
+                init_robot_pose.set_result(pose)
 
-        init_pose_timer = self.node.create_timer(1, _get_init_pose)
-        rclpy.spin_until_future_complete(
-            self.node, init_robot_pose, timeout_sec=init_timeout_sec
-        )
+        init_pose_timer = self.node.create_timer(1.0, _get_init_pose)
+        rclpy.spin_until_future_complete(self.node, init_robot_pose, timeout_sec=init_timeout_sec)
+        self.node.destroy_timer(init_pose_timer)
 
         if init_robot_pose.result() is None:
-            error_message = \
-                f'Timeout trying to initialize robot [{self.name}]'
-            self.node.get_logger().error(error_message)
-            raise RuntimeError(error_message)
+            raise RuntimeError(f"Timeout trying to initialize robot [{self.name}]")
 
-        self.node.destroy_timer(init_pose_timer)
         state = rmf_easy.RobotState(
             self.get_map_name(),
             init_robot_pose.result(),
-            self.get_battery_soc()
+            self.get_battery_soc(),
         )
 
         if self.fleet_handle is None:
             self.node.get_logger().warn(
-                f'Fleet unavailable, skipping adding robot [{self.name}] '
-                'to fleet.'
+                f"Fleet unavailable, skipping adding robot [{self.name}] to fleet."
             )
             return
 
@@ -275,35 +166,31 @@ class Nav2RobotAdapter(RobotAdapter):
             state,
             self.configuration,
             rmf_easy.RobotCallbacks(
-                lambda destination, execution: self.navigate(
-                    destination, execution
-                ),
+                lambda destination, execution: self.navigate(destination, execution),
                 lambda activity: self.stop(activity),
                 lambda category, description, execution: self.execute_action(
                     category, description, execution
-                )
-            )
+                ),
+            ),
         )
         if not self.update_handle:
-            error_message = \
-                f'Failed to add robot [{self.name}] to fleet ' \
-                f'[{self.fleet_handle.more().fleet_name}], this is most ' \
-                'likely due to a configuration error.'
-            self.node.get_logger().error(error_message)
-            raise RuntimeError(error_message)
+            raise RuntimeError(
+                f"Failed to add robot [{self.name}] to fleet "
+                f"[{self.fleet_handle.more().fleet_name}]"
+            )
 
+        # Load plugin actions
         if self.fleet_config is None:
             self.node.get_logger().info(
-                'No fleet configuration provided for RobotAdapter of '
-                f'[{self.name}]. No plugin actions will be loaded.'
+                f"No fleet configuration provided for RobotAdapter [{self.name}]. "
+                "No plugin actions will be loaded."
             )
             return
 
-        # Import and store plugin actions and action factories
         if plugin_config is not None:
             for plugin_name, action_config in plugin_config.items():
                 try:
-                    module = action_config['module']
+                    module = action_config["module"]
                     plugin = importlib.import_module(module)
                     action_context = RobotActionContext(
                         self.node,
@@ -313,366 +200,102 @@ class Nav2RobotAdapter(RobotAdapter):
                         action_config,
                         self.get_battery_soc,
                         self.get_map_name,
-                        self.get_pose
+                        self.get_pose,
                     )
                     action_factory = plugin.ActionFactory(action_context)
                     for action in action_factory.actions:
-                        # Verify that this action is not duplicated across plugins
                         target_plugin = self.action_to_plugin_name.get(action)
-                        if (target_plugin is not None and
-                                target_plugin != plugin_name):
+                        if target_plugin is not None and target_plugin != plugin_name:
                             raise Exception(
-                                f'Action [{action}] is indicated to be supported '
-                                f'by multiple plugins: {target_plugin} and '
-                                f'{plugin_name}. The fleet adapter is unable to '
-                                f'select the intended plugin to be paired for '
-                                f'this action. Please ensure that action names '
-                                f'are not duplicated across supported plugins. '
-                                f'Unable to create ActionFactory for '
-                                f'{plugin_name}. Robot [{self.name}] will not be '
-                                f'able to perform actions associated with this '
-                                f'plugin.'
+                                f"Action [{action}] is duplicated across plugins: "
+                                f"{target_plugin} and {plugin_name}"
                             )
-                        # Verify that this ActionFactory supports this action
                         if not action_factory.supports_action(action):
                             raise ValueError(
-                                f'The plugin config provided [{action}] as a '
-                                f'performable action, but it is not a supported '
-                                f'action in the {plugin_name} ActionFactory!'
+                                f"Plugin [{plugin_name}] does not support configured action [{action}]"
                             )
                         self.action_to_plugin_name[action] = plugin_name
                     self.action_factories[plugin_name] = action_factory
-                except KeyError:
-                    self.node.get_logger().info(
-                        f'Unable to create ActionFactory for {plugin_name}! '
-                        f'Configured plugin config is invalid. '
-                        f'Robot [{self.name}] will not be able to perform '
-                        f'actions associated with this plugin.'
-                    )
                 except ImportError as e:
-                    # Include the module path and exception details to help debug
                     self.node.get_logger().error(
-                        f'Unable to import plugin module [{module}] for plugin '
-                        f'[{plugin_name}] on robot [{self.name}]: {type(e)}: {e}'
+                        f"Unable to import plugin module [{action_config.get('module')}] "
+                        f"for plugin [{plugin_name}] on robot [{self.name}]: {type(e)}: {e}"
+                    )
+                    self.node.get_logger().debug(traceback.format_exc())
+                except Exception as e:
+                    self.node.get_logger().error(
+                        f"Unable to create ActionFactory for plugin [{plugin_name}] "
+                        f"on robot [{self.name}]: {type(e)}: {e}"
                     )
                     self.node.get_logger().debug(traceback.format_exc())
 
+    # ------------------------
+    # ROS subscriptions
+    # ------------------------
+    def _battery_state_ros_callback(self, msg: RosBatteryState):
+        soc = float(msg.percentage) if msg.percentage == msg.percentage else self.battery_soc
+        if soc < 0.0:
+            soc = 0.0
+        if soc > 1.0:
+            # Some stacks publish [0, 100]
+            soc = soc / 100.0 if soc <= 100.0 else 1.0
+        with self._state_lock:
+            self.battery_soc = soc
+
+    def _robot_pose_ros_callback(self, msg: RosPose):
+        with self._state_lock:
+            self.robot_pose = msg
+
+    # ------------------------
+    # RobotAdapter API
+    # ------------------------
     def get_battery_soc(self) -> float:
-        return self.battery_soc
+        with self._state_lock:
+            return float(self.battery_soc)
 
     def get_map_name(self) -> str:
         return self.map_name
 
     def get_pose(self) -> Annotated[list[float], 3] | None:
-        robot_pose = self.robot_pose
-        if robot_pose is None:
-            error_message = \
-                f'Failed to update robot [{self.name}]: Unable to get ' \
-                f'robot pose'
-            self.node.get_logger().info(error_message)
+        with self._state_lock:
+            pose = self.robot_pose
+        if pose is None:
             return None
 
-        orientation = euler_from_quaternion([
-            robot_pose.orientation.x,
-            robot_pose.orientation.y,
-            robot_pose.orientation.z,
-            robot_pose.orientation.w
-        ])
-        robot_pose = [
-            robot_pose.position.x,
-            robot_pose.position.y,
-            orientation[2]
-        ]
-        return robot_pose
-
-    def _is_navigation_done(self, nav_handle: ExecutionHandle) -> bool:
-        if nav_handle.goal_id is None:
-            return True
-
-        if nav_handle.last_received_feedback is not None:
-            estimated_completion_sec = \
-                nav_handle.last_received_feedback.time_sec + \
-                nav_handle.last_received_feedback.feedback.estimated_time_remaining.sec
-            if estimated_completion_sec > self.node.get_clock().now().seconds_nanoseconds()[0]:
-                return False
-
-        req = NavigateThroughPoses_GetResult_Request(goal_id=nav_handle.goal_id)
-        # TODO(ac): parameterize the service call timeout
-        replies = self.zenoh_session.get(
-            namespacify('navigate_through_poses/_action/get_result', self.name),
-            payload=req.serialize(),
-            timeout=self.service_call_timeout_sec
-        )
-        replies = list(replies)
-        if len(replies) == 0:
-            self.node.get_logger().debug(
-                'navigate_through_poses get_result: no replies (timeout?)'
-            )
-            return False
-
-        for reply in replies:
-            try:
-                if not getattr(reply, 'ok', None):
-                    err_payload = None
-                    if getattr(reply, 'err', None) and getattr(reply.err, 'payload', None):
-                        err_payload = reply.err.payload.to_string()
-                    self.node.get_logger().debug(
-                        f'navigate_through_poses get_result error reply: {err_payload}'
-                    )
-                    continue
-
-                rep = NavigateThroughPoses_GetResult_Response.deserialize(
-                    reply.ok.payload.to_bytes()
-                )
-                self.node.get_logger().debug(f'Result: {rep.status}')
-                match rep.status:
-                    case GoalStatus.STATUS_EXECUTING.value | \
-                         GoalStatus.STATUS_ACCEPTED.value | \
-                         GoalStatus.STATUS_CANCELING.value:
-                        return False
-                    case GoalStatus.STATUS_SUCCEEDED.value:
-                        self.node.get_logger().info(
-                            f'Navigation goal {nav_handle.goal_id} reached'
-                        )
-                        if self.nav_issue_ticket is not None:
-                            msg = {}
-                            self.nav_issue_ticket.resolve(msg)
-                            self.nav_issue_ticket = None
-                            self.node.get_logger().info(
-                                'Navigation issue ticket has been resolved'
-                            )
-                        return True
-                    case GoalStatus.STATUS_CANCELED.value:
-                        self.node.get_logger().info(
-                            f'Navigation goal {nav_handle.goal_id} was cancelled'
-                        )
-                        return True
-                    case _:
-                        self.nav_issue_ticket = self.create_nav_issue_ticket(
-                            'navigation',
-                            f'Navigate to pose result status [{rep.status}]',
-                            nav_handle.goal_id
-                        )
-
-                        # TODO(ac): test replanning behavior if goal status is
-                        # neither executing or succeeded
-                        self.replan_counts += 1
-                        self.node.get_logger().error(
-                            f'Navigation goal {nav_handle.goal_id} status '
-                            f'{rep.status}, replan count '
-                            f'[{self.replan_counts}]'
-                        )
-                        self.update_handle.more().replan()
-                        return False
-            except Exception as e:
-                err_payload = None
-                if getattr(reply, 'err', None) and getattr(reply.err, 'payload', None):
-                    err_payload = reply.err.payload.to_string()
-                self.node.get_logger().debug(
-                    f'navigate_through_poses get_result exception. '
-                    f'err={err_payload} exc={type(e)}: {e}'
-                )
-                continue
-
-    # TODO(ac): issue ticket can be more generic for execute actions too
-    def create_nav_issue_ticket(self, category, msg, nav_goal_id=None):
-        if self.update_handle is None:
-            error_message = \
-                'Failed to create navigation issue ticket for robot ' \
-                f'{self.name}, robot adapter has not yet been initialized ' \
-                'with a fleet update handle.'
-            self.node.get_logger().error(error_message)
-            return None
-
-        tier = Tier.Error
-        detail = {
-            'nav_goal_id': f'{nav_goal_id}',
-            'message': msg
-        }
-        nav_issue_ticket = \
-            self.update_handle.more().create_issue(tier, category, detail)
-        self.node.get_logger().info(
-            f'Created [{category}] issue ticket for robot [{self.name}] with '
-            f'nav goal ID [{nav_goal_id}]')
-        return nav_issue_ticket
+        yaw = euler_from_quaternion(
+            [pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w]
+        )[2]
+        return [pose.position.x, pose.position.y, yaw]
 
     def update(self, state: rmf_easy.RobotState):
         if self.update_handle is None:
-            error_message = \
-                f'Failed to update robot {self.name}, robot adapter has not ' \
-                'yet been initialized with a fleet update handle.'
-            self.node.get_logger().error(error_message)
+            self.node.get_logger().error(
+                f"Failed to update robot {self.name}, update_handle is None"
+            )
             return
 
         activity_identifier = None
         exec_handle = self.exec_handle
         if exec_handle:
-            # Handle navigation
-            if exec_handle.execution and exec_handle.goal_id and \
-                    self._is_navigation_done(exec_handle):
-                # TODO(ac): Refactor this check as as self._is_navigation_done
-                # takes a while and the execution may have become None due to
-                # task cancellation.
-                exec_handle.execution.finished()
-                exec_handle.execution = None
-                # TODO(ac): use an enum to record what type of execution it is,
-                # whether navigation or custom executions
-                self.replan_counts = 0
-            # Handle custom actions
+            if exec_handle.execution and getattr(exec_handle, "_ros_result_future", None):
+                if self._is_navigation_done(exec_handle):
+                    exec_handle.execution.finished()
+                    exec_handle.execution = None
+                    self.replan_counts = 0
             elif exec_handle.execution and exec_handle.action:
                 current_action_state = exec_handle.action.update_action()
                 match current_action_state:
-                    case RobotActionState.CANCELED | \
-                            RobotActionState.COMPLETED | \
-                            RobotActionState.FAILED:
-                        self.node.get_logger().info(
-                            f'Robot [{self.name}] current action '
-                            f'[{current_action_state}]'
-                        )
+                    case RobotActionState.CANCELED | RobotActionState.COMPLETED | RobotActionState.FAILED:
                         exec_handle.execution.finished()
                         exec_handle.action = None
-            # Commands are still being carried out
             activity_identifier = exec_handle.activity
 
         self.update_handle.update(state, activity_identifier)
 
-    def _handle_navigate_through_poses(
-        self,
-        map_name: str,
-        x: float,
-        y: float,
-        z: float,
-        yaw: float,
-        nav_handle: ExecutionHandle
-    ):
-        if map_name != self.map_name:
-            self.node.get_logger().info(
-                f'Destination is on map [{map_name}], while robot '
-                f'[{self.name}] is on map [{self.map_name}]. '
-                f'Attempting to change map...'
-            )
-            success = self.change_map(map_name)
-            if success:
-                self.map_name = map_name
-                self.node.get_logger().info(
-                    f'Successfully changed map to [{map_name}].'
-                )
-                # TODO(ac): Should we also republish initial pose here?
-                # Usually map change implies position reset or known transform
-            else:
-                self.replan_counts += 1
-                self.node.get_logger().error(
-                    f'Failed to change map to [{map_name}], replan count '
-                    f'[{self.replan_counts}]'
-                )
-                if self.update_handle is None:
-                    error_message = \
-                        f'Failed to replan for robot {self.name}, robot ' \
-                        'adapter has not yet been initialized with a fleet ' \
-                        'update handle.'
-                    self.node.get_logger().error(error_message)
-                    return
-                self.update_handle.more().replan()
-                return
-
-        time_now = self.node.get_clock().now().seconds_nanoseconds()
-        stamp = Time(sec=time_now[0], nanosec=time_now[1])
-        header = Header(stamp=stamp, frame_id=self.map_frame)
-        position = GeometryMsgs_Point(x=x, y=y, z=z)
-        quat = quaternion_from_euler(0, 0, yaw)
-        orientation = GeometryMsgs_Quaternion(
-            x=quat[0],
-            y=quat[1],
-            z=quat[2],
-            w=quat[3]
-        )
-        pose = GeometryMsgs_Pose(position=position, orientation=orientation)
-        pose_stamped = GeometryMsgs_PoseStamped(header=header, pose=pose)
-
-        nav_goal_id = \
-            np.random.randint(0, 255, size=(16)).astype('uint8').tolist()
-        req = NavigateThroughPoses_SendGoal_Request(
-            goal_id=nav_goal_id,
-            poses=[pose_stamped],
-            behavior_tree='/data/behavior_trees/zc_nav.xml',
-            planner_id='GridBased',
-            controller_id='FollowPath'
-        )
-        
-        keyexpr = namespacify('navigate_through_poses/_action/send_goal', self.name)
-        replies = self.zenoh_session.get(
-            keyexpr,
-            payload=req.serialize(),
-            timeout=self.service_call_timeout_sec
-        )
-
-        replies = list(replies)
-        if len(replies) == 0:
-            self.replan_counts += 1
-            self.node.get_logger().error(
-                f'Navigation send_goal got no replies on [{keyexpr}] '
-                f'(timeout?), replan count [{self.replan_counts}]'
-            )
-            if self.update_handle is not None:
-                self.update_handle.more().replan()
-            return
-
-        for reply in replies:
-            try:
-                if not getattr(reply, 'ok', None):
-                    err_payload = None
-                    if getattr(reply, 'err', None) and getattr(reply.err, 'payload', None):
-                        err_payload = reply.err.payload.to_string()
-                    self.replan_counts += 1
-                    self.node.get_logger().error(
-                        f'Navigation send_goal failed on [{keyexpr}], '
-                        f'error={err_payload}, replan count [{self.replan_counts}]'
-                    )
-                    if self.update_handle is not None:
-                        self.update_handle.more().replan()
-                    return
-
-                rep = NavigateThroughPoses_SendGoal_Response.deserialize(
-                    reply.ok.payload.to_bytes())
-                if rep.accepted:
-                    self.node.get_logger().info(
-                        f'Navigation goal {nav_goal_id} accepted'
-                    )
-                    nav_handle.set_goal_id(nav_goal_id)
-                    return
-
-                self.replan_counts += 1
-                self.node.get_logger().error(
-                    f'Navigation goal {nav_goal_id} was rejected, replan '
-                    f'count [{self.replan_counts}]'
-                )
-                if self.update_handle is None:
-                    error_message = \
-                        f'Failed to replan for robot {self.name}, robot ' \
-                        'adapter has not yet been initialized with a fleet ' \
-                        'update handle.'
-                    self.node.get_logger().error(error_message)
-                    return
-                self.update_handle.more().replan()
-                return
-            except Exception as e:
-                payload = None
-                if getattr(reply, 'err', None) and getattr(reply.err, 'payload', None):
-                    payload = reply.err.payload.to_string()
-                self.node.get_logger().error(
-                    f'Received (ERROR: {payload}: {type(e)}: {e})'
-                )
-                continue
-
-    def navigate(
-        self,
-        destination: rmf_easy.Destination,
-        execution: rmf_easy.CommandExecution
-    ):
+    def navigate(self, destination: rmf_easy.Destination, execution: rmf_easy.CommandExecution):
         self._request_stop(self.exec_handle)
         self.node.get_logger().info(
-            f'Commanding [{self.name}] to navigate to {destination.position} '
-            f'on map [{destination.map}]'
+            f"Commanding [{self.name}] to navigate to {destination.position} on map [{destination.map}]"
         )
         self.exec_handle = ExecutionHandle(execution)
         self._handle_navigate_through_poses(
@@ -681,124 +304,20 @@ class Nav2RobotAdapter(RobotAdapter):
             destination.position[1],
             0.0,
             destination.position[2],
-            self.exec_handle
+            self.exec_handle,
         )
-
-    def _request_stop(self, exec_handle: ExecutionHandle):
-        if exec_handle is not None:
-            with exec_handle.mutex:
-                if (exec_handle.goal_id is not None):
-                    self._handle_stop_navigation()
-
-    def _handle_stop_navigation(self):
-        req = make_nav2_cancel_all_goals_request()
-        replies = self.zenoh_session.get(
-            namespacify(
-                'navigate_through_poses/_action/cancel_goal',
-                self.name,
-            ),
-            payload=req.serialize(),
-            timeout=self.service_call_timeout_sec
-        )
-        for reply in replies:
-            try:
-                rep = ActionMsgs_CancelGoal_Response.deserialize(
-                    reply.ok.payload.to_bytes()
-                )
-                self.node.get_logger().info(
-                    'Return code: %d' % rep.return_code
-                )
-            except Exception as e:
-                self.node.get_logger().warn(
-                    f'Failed to deserialize cancel goal response: {e}. '
-                    f'Reply might be an error.'
-                )
-                if hasattr(reply, 'err') and reply.err:
-                    self.node.get_logger().warn(
-                        f'Error payload: {reply.err.payload.to_string()}'
-                    )
 
     def stop(self, activity: ActivityIdentifier):
         exec_handle = self.exec_handle
         if exec_handle is None:
             return
-            
-    def change_map(
-        self,
-        map_name: str,
-    ):
-        map_url = '/data/maps/' + map_name + '.yaml'
-        value = LoadMap_Request(map_url=map_url)
-        replies = self.zenoh_session.get(
-            namespacify('map_server/load_map', self.name),
-            payload=value.serialize(),
-            # timeout=0.5
-        )
-        for reply in replies:
-            try:
-                rep = LoadMap_Response.deserialize(
-                    reply.ok.payload.to_bytes()
-                )
-                self.node.get_logger().info(
-                    f'Map server load map result: {rep.result}'
-                )
-                if not rep.result == 0:
-                    return False
-            except Exception as e:
-                self.node.get_logger().warn(
-                    f'Failed to deserialize map load response: {e}. '
-                    f'Reply might be an error.'
-                )
-                if hasattr(reply, 'err') and reply.err:
-                    self.node.get_logger().warn(
-                        f'Error payload: {reply.err.payload.to_string()}'
-                    )
-                return False
+        if exec_handle.execution is not None and activity.is_same(exec_handle.activity):
+            self._request_stop(exec_handle)
+            self.exec_handle = None
 
-        map_url = '/data/maps/mask/' + map_name + '.yaml'
-        value = LoadMap_Request(map_url=map_url)
-        replies = self.zenoh_session.get(
-            namespacify('filter_mask_server/load_map', self.name),
-            payload=value.serialize(),
-            # timeout=0.5
-        )
-        for reply in replies:
-            try:
-                rep = LoadMap_Response.deserialize(
-                    reply.ok.payload.to_bytes()
-                )
-                self.node.get_logger().info(
-                    f'Filter mask server load map result: {rep.result}'
-                )
-                if not rep.result == 0:
-                    return False
-            except Exception as e:
-                self.node.get_logger().warn(
-                    f'Failed to deserialize mask load response: {e}. '
-                    f'Reply might be an error.'
-                )
-                if hasattr(reply, 'err') and reply.err:
-                    self.node.get_logger().warn(
-                        f'Error payload: {reply.err.payload.to_string()}'
-                    )
-                return False
-        return True
-
-    def execute_action(
-        self,
-        category: str,
-        description: dict,
-        execution: ActionExecution,
-    ):
+    def execute_action(self, category: str, description: dict, execution: ActionExecution):
         current_exec_handle = self.exec_handle
-        if current_exec_handle is not None and \
-                current_exec_handle.action is not None:
-            # This should never be reached
-            self.node.get_logger().error(
-                f'Robot [{self.name}] received a new action while it is busy '
-                'with another action. Ending current action and accepting '
-                f'incoming action [{category}]'
-            )
+        if current_exec_handle is not None and current_exec_handle.action is not None:
             if current_exec_handle.execution is not None:
                 current_exec_handle.execution.finished()
             current_exec_handle.action = None
@@ -808,26 +327,216 @@ class Nav2RobotAdapter(RobotAdapter):
         if plugin_name:
             action_factory = self.action_factories.get(plugin_name)
         else:
-            for plugin, factory in self.action_factories.items():
+            for _, factory in self.action_factories.items():
                 if factory.supports_action(category):
                     factory.actions.append(category)
                     action_factory = factory
                     break
 
         if action_factory:
-            # Valid action-plugin pair exists, create RobotAction
-            robot_action = action_factory.perform_action(
-                category, description, execution
-            )
+            robot_action = action_factory.perform_action(category, description, execution)
             self.exec_handle = ExecutionHandle(execution)
             self.exec_handle.set_action(robot_action)
             return
 
-        # TODO(ac): change map using map_server load_map, and set initial
-        # position again with /initialpose
-        # TODO(ac): docking
-        # We should never reach this point after initialization.
-        error_message = \
-            f'RobotAction [{category}] was not configured for this fleet.'
-        self.node.get_logger().error(error_message)
-        raise NotImplementedError(error_message)
+        raise NotImplementedError(f"RobotAction [{category}] was not configured for this fleet.")
+
+    # ------------------------
+    # Nav2 control (ROS2)
+    # ------------------------
+    def _request_stop(self, exec_handle: ExecutionHandle | None):
+        if exec_handle is None:
+            return
+        # Wait until a goal_id is set (ExecutionHandle mutex held until then)
+        with exec_handle.mutex:
+            if exec_handle.goal_id is not None:
+                self._handle_stop_navigation(exec_handle)
+
+    def _handle_stop_navigation(self, exec_handle: ExecutionHandle):
+        gh = getattr(exec_handle, "_ros_goal_handle", None)
+        if gh is None:
+            return
+        try:
+            gh.cancel_goal_async()
+        except Exception as e:
+            self.node.get_logger().warn(f"Failed to cancel goal: {type(e)}: {e}")
+
+    def _is_navigation_done(self, nav_handle: ExecutionHandle) -> bool:
+        result_future = getattr(nav_handle, "_ros_result_future", None)
+        if result_future is None:
+            return True
+        if not result_future.done():
+            return False
+
+        try:
+            result = result_future.result()
+        except Exception as e:
+            self.replan_counts += 1
+            self.node.get_logger().error(
+                f"Navigation result future failed: {type(e)}: {e}, replan count [{self.replan_counts}]"
+            )
+            if self.update_handle is not None:
+                self.update_handle.more().replan()
+            return False
+
+        status = getattr(result, "status", None)
+        if status == RosGoalStatus.STATUS_SUCCEEDED:
+            return True
+        if status in (
+            RosGoalStatus.STATUS_ACCEPTED,
+            RosGoalStatus.STATUS_EXECUTING,
+            RosGoalStatus.STATUS_CANCELING,
+        ):
+            return False
+
+        # aborted/rejected/canceled -> trigger replan
+        self.replan_counts += 1
+        self.node.get_logger().error(
+            f"Navigation ended with status [{status}], replan count [{self.replan_counts}]"
+        )
+        if self.update_handle is not None:
+            self.update_handle.more().replan()
+        return False
+
+    def _handle_navigate_through_poses(
+        self,
+        map_name: str,
+        x: float,
+        y: float,
+        z: float,
+        yaw: float,
+        nav_handle: ExecutionHandle,
+    ):
+        if map_name != self.map_name:
+            self.node.get_logger().info(
+                f"Destination is on map [{map_name}], while robot [{self.name}] is on map [{self.map_name}]. "
+                "Attempting to change map..."
+            )
+            if not self.change_map(map_name):
+                self.replan_counts += 1
+                self.node.get_logger().error(
+                    f"Failed to change map to [{map_name}], replan count [{self.replan_counts}]"
+                )
+                if self.update_handle is not None:
+                    self.update_handle.more().replan()
+                nav_handle.set_goal_id(None)
+                return
+            self.map_name = map_name
+
+        if not self._nav_action_client.wait_for_server(timeout_sec=self.service_call_timeout_sec):
+            self.replan_counts += 1
+            self.node.get_logger().error(
+                f"Nav2 action server [{self._nav_action_name}] not available, replan count [{self.replan_counts}]"
+            )
+            if self.update_handle is not None:
+                self.update_handle.more().replan()
+            nav_handle.set_goal_id(None)
+            return
+
+        pose_stamped = RosPoseStamped()
+        pose_stamped.header.stamp = self.node.get_clock().now().to_msg()
+        pose_stamped.header.frame_id = self.map_frame
+        pose_stamped.pose.position.x = float(x)
+        pose_stamped.pose.position.y = float(y)
+        pose_stamped.pose.position.z = float(z)
+        quat = quaternion_from_euler(0, 0, yaw)
+        pose_stamped.pose.orientation.x = float(quat[0])
+        pose_stamped.pose.orientation.y = float(quat[1])
+        pose_stamped.pose.orientation.z = float(quat[2])
+        pose_stamped.pose.orientation.w = float(quat[3])
+
+        goal_msg = NavigateThroughPoses.Goal()
+        goal_msg.poses = [pose_stamped]
+        goal_msg.behavior_tree = self.robot_config_yaml.get("behavior_tree", "")
+        goal_msg.planner_id = self.robot_config_yaml.get("planner_id", "")
+        goal_msg.controller_id = self.robot_config_yaml.get("controller_id", "")
+
+        def _feedback_cb(feedback_msg):
+            eh = self.exec_handle
+            if eh is None:
+                return
+            eh.last_received_feedback = ExecutionFeedback(
+                feedback_msg.feedback, self.node.get_clock().now().seconds_nanoseconds()[0]
+            )
+
+        send_future = self._nav_action_client.send_goal_async(
+            goal_msg, feedback_callback=_feedback_cb
+        )
+
+        def _on_goal_response(fut):
+            try:
+                gh = fut.result()
+            except Exception as e:
+                self.replan_counts += 1
+                self.node.get_logger().error(
+                    f"Failed to send nav goal: {type(e)}: {e}, replan count [{self.replan_counts}]"
+                )
+                if self.update_handle is not None:
+                    self.update_handle.more().replan()
+                nav_handle.set_goal_id(None)
+                return
+
+            if not gh.accepted:
+                self.replan_counts += 1
+                self.node.get_logger().error(
+                    f"Navigation goal rejected, replan count [{self.replan_counts}]"
+                )
+                if self.update_handle is not None:
+                    self.update_handle.more().replan()
+                nav_handle.set_goal_id(None)
+                return
+
+            nav_handle._ros_goal_handle = gh
+            nav_handle._ros_result_future = gh.get_result_async()
+            nav_handle.set_goal_id(gh.goal_id.uuid)
+
+        send_future.add_done_callback(_on_goal_response)
+
+    def change_map(self, map_name: str) -> bool:
+        map_url = f"/data/maps/{map_name}.yaml"
+        req = LoadMap.Request()
+        req.map_url = map_url
+
+        if not self._map_load_client.wait_for_service(timeout_sec=self.service_call_timeout_sec):
+            self.node.get_logger().error(
+                f"LoadMap service not available: [{self._map_server_load_map_srv}]"
+            )
+            return False
+
+        fut = self._map_load_client.call_async(req)
+        if not _wait_future(fut, timeout_sec=self.service_call_timeout_sec):
+            self.node.get_logger().error("LoadMap call timed out")
+            return False
+        rep = fut.result()
+        if rep is None or rep.result != 0:
+            self.node.get_logger().error(f"LoadMap failed: result={getattr(rep, 'result', None)}")
+            return False
+
+        # Optional: filter mask server
+        if self._mask_load_client.service_is_ready():
+            mask_req = LoadMap.Request()
+            mask_req.map_url = f"/data/maps/mask/{map_name}.yaml"
+            fut2 = self._mask_load_client.call_async(mask_req)
+            _wait_future(fut2, timeout_sec=self.service_call_timeout_sec)
+
+        return True
+
+    # ------------------------
+    # Issue tickets
+    # ------------------------
+    def create_nav_issue_ticket(self, category, msg, nav_goal_id=None):
+        if self.update_handle is None:
+            self.node.get_logger().error(
+                f"Failed to create navigation issue ticket for robot {self.name}: update_handle is None"
+            )
+            return None
+
+        tier = Tier.Error
+        detail = {"nav_goal_id": f"{nav_goal_id}", "message": msg}
+        nav_issue_ticket = self.update_handle.more().create_issue(tier, category, detail)
+        self.node.get_logger().info(
+            f"Created [{category}] issue ticket for robot [{self.name}] with nav goal ID [{nav_goal_id}]"
+        )
+        return nav_issue_ticket
+
+
