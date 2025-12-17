@@ -17,6 +17,7 @@
 import importlib
 import traceback
 import time
+import threading
 from typing import Annotated
 
 from free_fleet.convert import transform_stamped_to_ros2_msg
@@ -71,58 +72,6 @@ from tf_transformations import euler_from_quaternion, quaternion_from_euler
 import zenoh
 
 
-class Nav2TfHandler:
-
-    def __init__(self, robot_name, zenoh_session, tf_buffer, node,
-                 robot_frame='base_footprint', map_frame='map'):
-        self.robot_name = robot_name
-        self.zenoh_session = zenoh_session
-        self.node = node
-        self.tf_buffer = tf_buffer
-        self.robot_frame = robot_frame
-        self.map_frame = map_frame
-        self.robot_pose = None
-        self._last_pose_log_time = 0.0
-
-        def _robot_pose_callback(sample: zenoh.Sample):
-            try:
-                robot_pose = GeometryMsgs_Pose.deserialize(sample.payload.to_bytes())
-                self.robot_pose = robot_pose
-            except Exception as e:
-                self.node.get_logger().debug(
-                    f'Failed to deserialize robot pose payload: {type(e)}: {e}'
-                )
-                return
-            # Throttled debug logging to avoid blocking on console I/O
-            now = time.monotonic()
-            if now - self._last_pose_log_time >= 2.0:
-                self._last_pose_log_time = now
-                try:
-                    key = str(sample.key_expr)
-                except Exception:
-                    key = '<unknown>'
-                self.node.get_logger().info(
-                    f'Received robot_pose for [{self.robot_name}] from keyexpr [{key}]: '
-                    f'({robot_pose.position.x:.3f}, {robot_pose.position.y:.3f})'
-                )
-
-        # Subscribe to robot pose from Zenoh. Keyexpr is namespaced by robot_name.
-        self._robot_pose_keyexpr = namespacify('robot_pose', self.robot_name)
-        self.pose_sub = self.zenoh_session.declare_subscriber(
-            self._robot_pose_keyexpr,
-            _robot_pose_callback
-        )
-
-    def get_robot_pose(self) -> GeometryMsgs_Pose | None:
-        try:
-            return self.robot_pose
-        except Exception as err:
-            self.node.get_logger().info(
-                f'Unable to get robot pose: {type(err)}: {err}'
-            )
-        return None
-
-
 class Nav2RobotAdapter(RobotAdapter):
 
     def __init__(
@@ -157,7 +106,12 @@ class Nav2RobotAdapter(RobotAdapter):
         # TODO(ac): Only use full battery if sim is indicated
         self.battery_soc = 1.0
         self.robot_pose = None
-        self._last_robot_pose_log_time = 0.0
+        # Robot pose reception diagnostics (Zenoh callback thread)
+        self._pose_lock = threading.Lock()
+        self._pose_rx_count = 0
+        self._pose_rx_last_mono: float | None = None
+        self._pose_report_last_mono: float = time.monotonic()
+        self._pose_report_last_count: int = 0
 
         self.replan_counts = 0
         self.nav_issue_ticket = None
@@ -174,22 +128,53 @@ class Nav2RobotAdapter(RobotAdapter):
             self.battery_soc = battery_state.percentage
         
         def _robot_pose_callback(sample: zenoh.Sample):
-            # add throttle to avoid blocking on console I/O  
+            # Keep this callback extremely lightweight. Zenoh dispatches
+            # callbacks from its own threads; heavy logging or computation here
+            # can delay subsequent samples.
             try:
                 robot_pose = GeometryMsgs_Pose.deserialize(sample.payload.to_bytes())
-                self.robot_pose = robot_pose
             except Exception as e:
-                self.node.get_logger().debug(
+                self.node.get_logger().warn(
                     f'Failed to deserialize robot pose payload: {type(e)}: {e}'
                 )
                 return
+
             now = time.monotonic()
-            if now - self._last_robot_pose_log_time >= 2.0:
-                self._last_robot_pose_log_time = now
+            with self._pose_lock:
+                self.robot_pose = robot_pose
+                self._pose_rx_count += 1
+                self._pose_rx_last_mono = now
+
+        def _report_robot_pose_stats():
+            now = time.monotonic()
+            with self._pose_lock:
+                count = self._pose_rx_count
+                last_mono = self._pose_rx_last_mono
+                pose = self.robot_pose
+
+            dt = max(1e-6, now - self._pose_report_last_mono)
+            dcount = count - self._pose_report_last_count
+            hz = float(dcount) / dt
+            age = None if last_mono is None else (now - last_mono)
+
+            self._pose_report_last_mono = now
+            self._pose_report_last_count = count
+
+            if pose is None or age is None:
                 self.node.get_logger().info(
-                    f'Received robot pose for [{self.name}] from keyexpr [{sample.key_expr}]: '
-                    f'({robot_pose.position.x:.3f}, {robot_pose.position.y:.3f})'
-                ) 
+                    f'robot_pose rx: no samples yet (total={count})'
+                )
+                return
+
+            self.node.get_logger().info(
+                f'robot_pose rx: {hz:.2f} Hz, age={age:.2f}s, total={count}, '
+                f'pose=({pose.position.x:.3f}, {pose.position.y:.3f})'
+            )
+
+        # Periodic reporting so we can see real receive rate without spamming logs
+        self._pose_report_timer = self.node.create_timer(
+            5.0, _report_robot_pose_stats
+        )
 
         self.battery_state_sub = self.zenoh_session.declare_subscriber(
             namespacify('battery/state', name),
