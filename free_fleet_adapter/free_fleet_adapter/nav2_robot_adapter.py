@@ -448,8 +448,17 @@ class Nav2RobotAdapter(RobotAdapter):
         goal_msg = NavigateThroughPoses.Goal()
         goal_msg.poses = [pose_stamped]
         goal_msg.behavior_tree = self.robot_config_yaml.get("behavior_tree", "")
-        goal_msg.planner_id = self.robot_config_yaml.get("planner_id", "")
-        goal_msg.controller_id = self.robot_config_yaml.get("controller_id", "")
+        # NOTE: Different Nav2 distributions / builds may expose different Goal
+        # fields for NavigateThroughPoses. Set optional fields only when present
+        # to avoid runtime AttributeError.
+        if hasattr(goal_msg, "planner_id"):
+            goal_msg.planner_id = self.robot_config_yaml.get("planner_id", "")
+        if hasattr(goal_msg, "controller_id"):
+            goal_msg.controller_id = self.robot_config_yaml.get("controller_id", "")
+        if hasattr(goal_msg, "goal_checker_id"):
+            goal_msg.goal_checker_id = self.robot_config_yaml.get("goal_checker_id", "")
+        if hasattr(goal_msg, "progress_checker_id"):
+            goal_msg.progress_checker_id = self.robot_config_yaml.get("progress_checker_id", "")
 
         def _feedback_cb(feedback_msg):
             eh = self.exec_handle
