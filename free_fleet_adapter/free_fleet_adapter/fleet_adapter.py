@@ -25,7 +25,7 @@ from free_fleet_adapter.nav2_robot_adapter import Nav2RobotAdapter
 import nudged
 import rclpy
 from rclpy.duration import Duration
-from rclpy.experimental import EventsExecutor
+from rclpy.executors import MultiThreadedExecutor
 import rclpy.node
 from rclpy.parameter import Parameter
 import rmf_adapter
@@ -243,7 +243,10 @@ def start_fleet_adapter(
     update_thread.start()
 
     # Create executor for the command handle node
-    rclpy_executor = EventsExecutor()
+    # Use the standard executor. The experimental EventsExecutor can hold the
+    # Python GIL for long stretches, which may starve other Python threads
+    # (e.g., Zenoh subscriber callbacks) and cause bursty deliveries.
+    rclpy_executor = MultiThreadedExecutor(num_threads=2)
     rclpy_executor.add_node(node)
 
     # Start the fleet adapter
