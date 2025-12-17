@@ -59,6 +59,7 @@ from free_fleet_adapter.robot_adapter import (
     RobotAdapter,
 )
 
+from geometry_msgs.msg import Pose as RosPose
 from geometry_msgs.msg import TransformStamped
 import numpy as np
 import rclpy
@@ -68,6 +69,8 @@ from rmf_adapter.robot_update_handle import (
     ActivityIdentifier,
     Tier,
 )
+from rclpy.qos import qos_profile_sensor_data
+from sensor_msgs.msg import BatteryState as RosBatteryState
 from tf_transformations import euler_from_quaternion, quaternion_from_euler
 import zenoh
 
@@ -106,12 +109,14 @@ class Nav2RobotAdapter(RobotAdapter):
         # TODO(ac): Only use full battery if sim is indicated
         self.battery_soc = 1.0
         self.robot_pose = None
-        # Robot pose reception diagnostics (Zenoh callback thread)
+        # Robot pose reception diagnostics (ROS2 subscription callbacks)
         self._pose_lock = threading.Lock()
         self._pose_rx_count = 0
         self._pose_rx_last_mono: float | None = None
         self._pose_report_last_mono: float = time.monotonic()
         self._pose_report_last_count: int = 0
+        self._battery_rx_count = 0
+        self._battery_rx_last_mono: float | None = None
 
         self.replan_counts = 0
         self.nav_issue_ticket = None
@@ -121,25 +126,38 @@ class Nav2RobotAdapter(RobotAdapter):
         # Maps plugin name to action factory
         self.action_factories = {}
 
-        def _battery_state_callback(sample: zenoh.Sample):
-            battery_state = SensorMsgs_BatteryState.deserialize(
-                sample.payload.to_bytes()
-            )
-            self.battery_soc = battery_state.percentage
-        
-        def _robot_pose_callback(sample: zenoh.Sample):
-            # Keep this callback extremely lightweight. Zenoh dispatches
-            # callbacks from its own threads; heavy logging or computation here
-            # can delay subsequent samples.
-            try:
-                robot_pose = GeometryMsgs_Pose.deserialize(sample.payload.to_bytes())
-            except Exception as e:
-                self.node.get_logger().warn(
-                    f'Failed to deserialize robot pose payload: {type(e)}: {e}'
-                )
-                return
-
+        # Prefer ROS 2 subscriptions for robot pose and battery state (lower
+        # latency and avoids Zenoh callback/GIL burstiness).
+        def _battery_state_ros_callback(msg: RosBatteryState):
             now = time.monotonic()
+            # sensor_msgs/BatteryState.percentage is typically [0.0, 1.0]
+            soc = float(msg.percentage) if msg.percentage == msg.percentage else self.battery_soc
+            if soc < 0.0:
+                soc = 0.0
+            if soc > 1.0:
+                # Some stacks publish [0, 100]; clamp to 1.0 to avoid breaking RMF
+                soc = soc / 100.0 if soc <= 100.0 else 1.0
+
+            with self._pose_lock:
+                self.battery_soc = soc
+                self._battery_rx_count += 1
+                self._battery_rx_last_mono = now
+
+        def _robot_pose_ros_callback(msg: RosPose):
+            now = time.monotonic()
+            robot_pose = GeometryMsgs_Pose(
+                position=GeometryMsgs_Point(
+                    x=float(msg.position.x),
+                    y=float(msg.position.y),
+                    z=float(msg.position.z),
+                ),
+                orientation=GeometryMsgs_Quaternion(
+                    x=float(msg.orientation.x),
+                    y=float(msg.orientation.y),
+                    z=float(msg.orientation.z),
+                    w=float(msg.orientation.w),
+                ),
+            )
             with self._pose_lock:
                 self.robot_pose = robot_pose
                 self._pose_rx_count += 1
@@ -151,6 +169,9 @@ class Nav2RobotAdapter(RobotAdapter):
                 count = self._pose_rx_count
                 last_mono = self._pose_rx_last_mono
                 pose = self.robot_pose
+                batt_count = self._battery_rx_count
+                batt_last = self._battery_rx_last_mono
+                soc = self.battery_soc
 
             dt = max(1e-6, now - self._pose_report_last_mono)
             dcount = count - self._pose_report_last_count
@@ -166,9 +187,11 @@ class Nav2RobotAdapter(RobotAdapter):
                 )
                 return
 
+            batt_age = None if batt_last is None else (now - batt_last)
             self.node.get_logger().info(
                 f'robot_pose rx: {hz:.2f} Hz, age={age:.2f}s, total={count}, '
-                f'pose=({pose.position.x:.3f}, {pose.position.y:.3f})'
+                f'pose=({pose.position.x:.3f}, {pose.position.y:.3f}); '
+                f'battery rx_total={batt_count}, age={batt_age if batt_age is not None else -1:.2f}s, soc={soc:.3f}'
             )
 
         # Periodic reporting so we can see real receive rate without spamming logs
@@ -176,14 +199,20 @@ class Nav2RobotAdapter(RobotAdapter):
             5.0, _report_robot_pose_stats
         )
 
-        self.battery_state_sub = self.zenoh_session.declare_subscriber(
-            namespacify('battery/state', name),
-            _battery_state_callback
+        # ROS2 topics (absolute): /<robot_name>/robot_pose and /<robot_name>/battery/state
+        self._ros_robot_pose_topic = f'/{namespacify("robot_pose", name)}'
+        self._ros_battery_topic = f'/{namespacify("battery/state", name)}'
+        self.robot_pose_sub = self.node.create_subscription(
+            RosPose,
+            self._ros_robot_pose_topic,
+            _robot_pose_ros_callback,
+            qos_profile_sensor_data,
         )
-
-        self.robot_pose_sub = self.zenoh_session.declare_subscriber(
-            namespacify('robot_pose', name),
-            _robot_pose_callback
+        self.battery_state_sub = self.node.create_subscription(
+            RosBatteryState,
+            self._ros_battery_topic,
+            _battery_state_ros_callback,
+            qos_profile_sensor_data,
         )
 
         def _feedback_callback(sample: zenoh.Sample):
