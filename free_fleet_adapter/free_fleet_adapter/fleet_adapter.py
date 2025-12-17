@@ -220,7 +220,7 @@ def start_fleet_adapter(
     def update_loop():
         asyncio.set_event_loop(asyncio.new_event_loop())
         while rclpy.ok():
-            now = node.get_clock().now()
+            loop_start = time.monotonic()
 
             # Update all the robots in parallel using a thread pool
             update_jobs = []
@@ -231,9 +231,13 @@ def start_fleet_adapter(
                 asyncio.wait(update_jobs)
             )
 
-            next_wakeup = now + Duration(nanoseconds=update_period*1e9)
-            while node.get_clock().now() < next_wakeup:
-                time.sleep(0.001)
+            # Sleep until next cycle. Avoid busy-waiting to reduce CPU usage and
+            # GIL contention, which can starve other threads (e.g., Zenoh
+            # subscriber callbacks).
+            elapsed = time.monotonic() - loop_start
+            sleep_sec = update_period - elapsed
+            if sleep_sec > 0:
+                time.sleep(sleep_sec)
 
     update_thread = threading.Thread(target=update_loop, args=())
     update_thread.start()
