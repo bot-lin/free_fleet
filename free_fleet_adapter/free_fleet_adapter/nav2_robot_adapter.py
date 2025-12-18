@@ -569,7 +569,14 @@ class Nav2RobotAdapter(RobotAdapter):
     # ------------------------
     def _fetch_current_map_name(self) -> str | None:
         url = f"http://{self.robot_ip}:5000/deploy/getCurrentMap"
-        req = Request(url, method="GET", headers={"Accept": "application/json"})
+        req = Request(
+            url,
+            method="GET",
+            headers={
+                "Accept": "application/json",
+                "x-api-key": "1234567890",
+            },
+        )
         try:
             with urlopen(req, timeout=self._map_http_timeout_sec) as resp:
                 status = getattr(resp, "status", None)
