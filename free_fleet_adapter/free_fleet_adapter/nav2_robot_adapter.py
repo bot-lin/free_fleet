@@ -15,13 +15,10 @@
 # limitations under the License.
 
 import importlib
-import json
 import threading
 import time
 import traceback
 from typing import Annotated
-from urllib.error import URLError
-from urllib.request import Request, urlopen
 
 import rclpy
 from rclpy.action import ActionClient
@@ -83,10 +80,9 @@ class Nav2RobotAdapter(RobotAdapter):
         self.tf_buffer = tf_buffer
 
         self.exec_handle: ExecutionHandle | None = None
-        self.map_name = None
+        self.map_name = self.robot_config_yaml["initial_map"]
         self.map_frame = self.robot_config_yaml.get("map_frame", "map")
         self.robot_frame = self.robot_config_yaml.get("robot_frame", "base_footprint")
-        self.robot_ip = self.robot_config_yaml.get("network_ip")
 
         self.service_call_timeout_sec = float(
             self.robot_config_yaml.get("service_call_timeout_sec", 5.0)
@@ -135,31 +131,6 @@ class Nav2RobotAdapter(RobotAdapter):
         self._mask_load_client = self.node.create_client(
             LoadMap, self._mask_server_load_map_srv
         )
-
-        # Periodically refresh current map name from robot HTTP endpoint.
-        # This is done in a background thread to avoid blocking RMF update loop.
-        self._map_poll_period_sec = float(
-            self.robot_config_yaml.get("current_map_poll_period_sec", 5.0)
-        )
-        if self._map_poll_period_sec <= 0:
-            self._map_poll_period_sec = 5.0
-        self._map_http_timeout_sec = float(
-            self.robot_config_yaml.get("current_map_http_timeout_sec", 1.0)
-        )
-        if self._map_http_timeout_sec <= 0:
-            self._map_http_timeout_sec = 1.0
-
-        self._map_poll_thread = None
-        if self.robot_ip:
-            self._map_poll_thread = threading.Thread(
-                target=self._poll_current_map_loop, daemon=True
-            )
-            self._map_poll_thread.start()
-        else:
-            self.node.get_logger().warn(
-                f'Robot [{self.name}] has no "network_ip" in config; '
-                "current map will remain as initial_map."
-            )
 
         # Initialize robot pose
         init_timeout_sec = float(self.robot_config_yaml.get("init_timeout_sec", 10))
@@ -283,8 +254,7 @@ class Nav2RobotAdapter(RobotAdapter):
             return float(self.battery_soc)
 
     def get_map_name(self) -> str:
-        with self._state_lock:
-            return str(self.map_name)
+        return self.map_name
 
     def get_pose(self) -> Annotated[list[float], 3] | None:
         with self._state_lock:
@@ -559,57 +529,6 @@ class Nav2RobotAdapter(RobotAdapter):
             _wait_future(fut2, timeout_sec=self.service_call_timeout_sec)
 
         return True
-
-    # ------------------------
-    # Current map via HTTP
-    # ------------------------
-    def _poll_current_map_loop(self):
-        # Stagger startup slightly
-        time.sleep(0.2)
-        while rclpy.ok():
-            try:
-                new_map = self._fetch_current_map_name()
-                if new_map:
-                    with self._state_lock:
-                        old = self.map_name
-                        if new_map != old:
-                            self.map_name = new_map
-                            self.node.get_logger().info(
-                                f'Robot [{self.name}] current map changed: '
-                                f'[{old}] -> [{new_map}]'
-                            )
-            except Exception as e:
-                # Keep quiet-ish: occasional failure is expected if endpoint
-                # restarts. Use debug to avoid log spam.
-                self.node.get_logger().debug(
-                    f'Failed to refresh current map from HTTP: {type(e)}: {e}'
-                )
-
-            time.sleep(self._map_poll_period_sec)
-
-    def _fetch_current_map_name(self) -> str | None:
-        if not self.robot_ip:
-            return None
-        url = f'http://{self.robot_ip}:5000/deploy/getCurrentMap'
-        req = Request(url, method="GET", headers={"Accept": "application/json"})
-        try:
-            with urlopen(req, timeout=self._map_http_timeout_sec) as resp:
-                body = resp.read()
-        except URLError as e:
-            raise RuntimeError(f"HTTP request failed: {e}") from e
-
-        try:
-            payload = json.loads(body.decode("utf-8"))
-        except Exception as e:
-            raise RuntimeError(f"Invalid JSON from {url}: {e}") from e
-
-        if payload.get("code") != 0:
-            return None
-        data = payload.get("data") or {}
-        map_name = data.get("map_name")
-        if not map_name:
-            return None
-        return str(map_name)
 
     # ------------------------
     # Issue tickets
