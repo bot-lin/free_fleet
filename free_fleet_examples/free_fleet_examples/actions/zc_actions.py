@@ -23,6 +23,7 @@ from free_fleet_adapter.action import (
     RobotActionState,
 )
 from action_msgs.msg import GoalStatus
+from geometry_msgs.msg import PoseStamped
 from nav2_msgs.action import NavigateThroughPoses
 from rclpy.action import ActionClient
 from std_msgs.msg import Empty
@@ -151,8 +152,12 @@ class GoToCharger(RobotAction):
                 return self.state
 
             goal = NavigateThroughPoses.Goal()
-            # As requested: docking uses the same action, but no poses
-            goal.poses = []
+            # Insert a minimal init pose so that goal.poses is non-empty.
+            # (Some Nav2 servers reject an empty poses list.)
+            init_pose = PoseStamped()
+            init_pose.header.stamp = self.context.node.get_clock().now().to_msg()
+            init_pose.header.frame_id = 'map'
+            goal.poses = [init_pose]
             goal.behavior_tree = '/data/actions/reflector_docking.xml'
 
             # Optional fields exist on some Nav2 versions
