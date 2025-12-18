@@ -22,6 +22,9 @@ from free_fleet_adapter.action import (
     RobotActionFactory,
     RobotActionState,
 )
+from action_msgs.msg import GoalStatus
+from nav2_msgs.action import NavigateThroughPoses
+from rclpy.action import ActionClient
 from std_msgs.msg import Empty
 
 
@@ -73,8 +76,6 @@ class GoToCharger(RobotAction):
             f'[{self.context.robot_name}]'
         )
         self.description = description
-        self.user = None
-        self.wait_duration_sec = 5
         self.start_millis = None
 
         # Enum used for tracking whether this action has been completed
@@ -84,12 +85,29 @@ class GoToCharger(RobotAction):
         self.cancel_topic = 'cancel_go_to_charger'
         self.cancel_sub = None
 
+        # Nav2 NavigateThroughPoses action client (namespaced)
+        self._action_name = f'/{self.context.robot_name}/navigate_through_poses'
+        self._client = ActionClient(
+            self.context.node, NavigateThroughPoses, self._action_name
+        )
+        self._send_goal_future = None
+        self._goal_handle = None
+        self._result_future = None
+
     def _cancel_action(self, msg: Empty):
         self.state = RobotActionState.CANCELING
         self.context.node.get_logger().info(
             'Received custom cancel command go_to_charger action for '
             f'robot [{self.context.robot_name}]'
         )
+
+        if self._goal_handle is not None:
+            try:
+                self._goal_handle.cancel_goal_async()
+            except Exception as e:
+                self.context.node.get_logger().warn(
+                    f'Failed to cancel docking goal: {type(e)}: {e}'
+                )
 
         def _cancel_success():
             self.state = RobotActionState.CANCELED
@@ -110,16 +128,8 @@ class GoToCharger(RobotAction):
                 self.state == RobotActionState.CANCELED:
             return self.state
 
-        # Parse the description, set up the custom cancellation topic and start
-        # time for this action
+        # Set up the custom cancellation topic and start the docking action once
         if self.start_millis is None:
-            wait_duration_sec = self.description.get('wait_duration_sec')
-            if wait_duration_sec is not None:
-                self.wait_duration_sec = int(wait_duration_sec)
-            user = self.description.get('user')
-            if user is not None:
-                self.user = str(user)
-
             # Start the subscription to listen for cancellation of this action
             self.cancel_sub = self.context.node.create_subscription(
                 Empty,
@@ -130,20 +140,92 @@ class GoToCharger(RobotAction):
 
             self.start_millis = round(time.time() * 1000)
 
-        # Complete the action if wait_duration_sec has elapsed
-        current_millis = round(time.time() * 1000)
-        if current_millis - self.start_millis > self.wait_duration_sec * 1000:
-            # Perform the action if it has not been handled yet, update the state
-            self.context.node.get_logger().info('Going to charger!')
-            current_pose = self.context.get_pose()
-            if current_pose is None:
-                self.context.node.get_logger().error('Unable to get pose!')
-            else:
-                self.context.node.get_logger().info(
-                    f'Current pose: {current_pose}')
+        # Send the docking goal if we haven't yet
+        if self._send_goal_future is None and self._goal_handle is None:
+            if not self._client.wait_for_server(timeout_sec=2.0):
+                self.context.node.get_logger().error(
+                    f'[{self.context.robot_name}] Nav2 action server not available: '
+                    f'[{self._action_name}]'
+                )
+                self.state = RobotActionState.FAILED
+                return self.state
 
-            self.state = RobotActionState.COMPLETED
-            return self.state
+            goal = NavigateThroughPoses.Goal()
+            # As requested: docking uses the same action, but no poses
+            goal.poses = []
+            goal.behavior_tree = '/data/actions/reflector_docking.xml'
+
+            # Optional fields exist on some Nav2 versions
+            if hasattr(goal, 'planner_id'):
+                goal.planner_id = ''
+            if hasattr(goal, 'controller_id'):
+                goal.controller_id = ''
+            if hasattr(goal, 'goal_checker_id'):
+                goal.goal_checker_id = ''
+
+            self.context.node.get_logger().info(
+                f'[{self.context.robot_name}] Sending GoToCharger docking goal '
+                f'via [{self._action_name}]'
+            )
+
+            self._send_goal_future = self._client.send_goal_async(goal)
+            return RobotActionState.IN_PROGRESS
+
+        # If goal response is ready, latch goal handle
+        if self._goal_handle is None and self._send_goal_future is not None:
+            if self._send_goal_future.done():
+                try:
+                    self._goal_handle = self._send_goal_future.result()
+                except Exception as e:
+                    self.context.node.get_logger().error(
+                        f'[{self.context.robot_name}] Failed to send docking goal: '
+                        f'{type(e)}: {e}'
+                    )
+                    self.state = RobotActionState.FAILED
+                    return self.state
+
+                if not self._goal_handle.accepted:
+                    self.context.node.get_logger().error(
+                        f'[{self.context.robot_name}] Docking goal rejected'
+                    )
+                    self.state = RobotActionState.FAILED
+                    return self.state
+
+                self._result_future = self._goal_handle.get_result_async()
+                self.context.node.get_logger().info(
+                    f'[{self.context.robot_name}] Docking goal accepted'
+                )
+
+        # Wait for result
+        if self._result_future is not None:
+            if not self._result_future.done():
+                self.state = RobotActionState.IN_PROGRESS
+                return self.state
+
+            try:
+                res = self._result_future.result()
+                status = getattr(res, 'status', None)
+            except Exception as e:
+                self.context.node.get_logger().error(
+                    f'[{self.context.robot_name}] Docking result future failed: '
+                    f'{type(e)}: {e}'
+                )
+                self.state = RobotActionState.FAILED
+                return self.state
+
+            if status == GoalStatus.STATUS_SUCCEEDED:
+                self.context.node.get_logger().info(
+                    f'[{self.context.robot_name}] Docking succeeded'
+                )
+                self.state = RobotActionState.COMPLETED
+                return self.state
+
+            if status in (GoalStatus.STATUS_CANCELED, GoalStatus.STATUS_ABORTED):
+                self.context.node.get_logger().warn(
+                    f'[{self.context.robot_name}] Docking ended with status [{status}]'
+                )
+                self.state = RobotActionState.FAILED
+                return self.state
 
         # Update that the action is still in progress
         self.state = RobotActionState.IN_PROGRESS
