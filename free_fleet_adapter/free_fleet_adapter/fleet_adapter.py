@@ -186,6 +186,11 @@ def start_fleet_adapter(
             for robot in robots.values():
                 update_jobs.append(update_robot(robot))
 
+            if len(update_jobs) == 0:
+                # No robots were added (e.g., not connected). Avoid asyncio.wait([])
+                time.sleep(update_period)
+                continue
+
             asyncio.get_event_loop().run_until_complete(
                 asyncio.wait(update_jobs)
             )

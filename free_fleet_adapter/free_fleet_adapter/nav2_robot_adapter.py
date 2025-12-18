@@ -20,7 +20,7 @@ import threading
 import time
 import traceback
 from typing import Annotated
-from urllib.error import URLError
+from urllib.error import URLError, HTTPError
 from urllib.request import Request, urlopen
 
 import rclpy
@@ -106,11 +106,15 @@ class Nav2RobotAdapter(RobotAdapter):
                 'cannot fetch current map.'
             )
 
+        url = f'http://{self.robot_ip}:5000/deploy/getCurrentMap'
+        self.node.get_logger().info(
+            f'Robot [{self.name}] fetching current map (startup) from [{url}] '
+            f'(timeout={self._map_http_timeout_sec:.2f}s)...'
+        )
         current_map = self._fetch_current_map_name()
         if not current_map:
             raise RuntimeError(
-                f'Robot [{self.name}] cannot fetch current map from '
-                f'http://{self.robot_ip}:5000/deploy/getCurrentMap'
+                f'Robot [{self.name}] cannot fetch current map from {url}'
             )
         self.map_name = current_map
         self.node.get_logger().info(
@@ -568,22 +572,44 @@ class Nav2RobotAdapter(RobotAdapter):
         req = Request(url, method="GET", headers={"Accept": "application/json"})
         try:
             with urlopen(req, timeout=self._map_http_timeout_sec) as resp:
+                status = getattr(resp, "status", None)
                 body = resp.read()
-        except URLError:
+        except HTTPError as e:
+            self.node.get_logger().error(
+                f'HTTP {e.code} from {url}: {e.reason}'
+            )
             return None
-        except Exception:
+        except URLError as e:
+            self.node.get_logger().error(
+                f'HTTP request to {url} failed: {type(e.reason)}: {e.reason}'
+            )
+            return None
+        except Exception as e:
+            self.node.get_logger().error(
+                f'HTTP request to {url} failed: {type(e)}: {e}'
+            )
             return None
 
         try:
             payload = json.loads(body.decode("utf-8"))
         except Exception:
+            preview = body[:200]
+            self.node.get_logger().error(
+                f'Invalid JSON from {url} (http_status={status}): {preview!r}'
+            )
             return None
 
         if payload.get("code") != 0:
+            self.node.get_logger().error(
+                f'HTTP {url} returned code={payload.get("code")} payload={payload}'
+            )
             return None
         data = payload.get("data") or {}
         map_name = data.get("map_name")
         if not map_name:
+            self.node.get_logger().error(
+                f'HTTP {url} missing data.map_name payload={payload}'
+            )
             return None
         return str(map_name)
 
