@@ -149,16 +149,23 @@ def start_fleet_adapter(
 
         nav_stack = robot_config_yaml['navigation_stack']
         if nav_stack == 2:
-            robots[robot_name] = Nav2RobotAdapter(
-                robot_name,
-                robot_config,
-                robot_config_yaml,
-                plugin_config,
-                node,
-                fleet_handle,
-                fleet_config,
-                tf_buffer
-            )
+            try:
+                robots[robot_name] = Nav2RobotAdapter(
+                    robot_name,
+                    robot_config,
+                    robot_config_yaml,
+                    plugin_config,
+                    node,
+                    fleet_handle,
+                    fleet_config,
+                    tf_buffer
+                )
+            except Exception as e:
+                node.get_logger().error(
+                    f'Robot [{robot_name}] not connected (failed to fetch current map), '
+                    f'skipping. {type(e)}: {e}'
+                )
+                continue
         else:
             error_message = \
                 'Navigation stack can only be 2 (ROS2 Nav2) when Zenoh is disabled'

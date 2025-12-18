@@ -15,10 +15,13 @@
 # limitations under the License.
 
 import importlib
+import json
 import threading
 import time
 import traceback
 from typing import Annotated
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 import rclpy
 from rclpy.action import ActionClient
@@ -83,9 +86,35 @@ class Nav2RobotAdapter(RobotAdapter):
         self.map_name = self.robot_config_yaml["initial_map"]
         self.map_frame = self.robot_config_yaml.get("map_frame", "map")
         self.robot_frame = self.robot_config_yaml.get("robot_frame", "base_footprint")
+        self.robot_ip = self.robot_config_yaml.get("network_ip")
 
         self.service_call_timeout_sec = float(
             self.robot_config_yaml.get("service_call_timeout_sec", 5.0)
+        )
+
+        # Fetch current map in the main thread before doing anything else.
+        # If this fails, treat the robot as not connected and do not add it to the fleet.
+        self._map_http_timeout_sec = float(
+            self.robot_config_yaml.get("current_map_http_timeout_sec", 1.0)
+        )
+        if self._map_http_timeout_sec <= 0:
+            self._map_http_timeout_sec = 1.0
+
+        if not self.robot_ip:
+            raise RuntimeError(
+                f'Robot [{self.name}] has no "network_ip" in config; '
+                'cannot fetch current map.'
+            )
+
+        current_map = self._fetch_current_map_name()
+        if not current_map:
+            raise RuntimeError(
+                f'Robot [{self.name}] cannot fetch current map from '
+                f'http://{self.robot_ip}:5000/deploy/getCurrentMap'
+            )
+        self.map_name = current_map
+        self.node.get_logger().info(
+            f'Robot [{self.name}] current map (startup): [{self.map_name}]'
         )
 
         # Robot state
@@ -254,7 +283,8 @@ class Nav2RobotAdapter(RobotAdapter):
             return float(self.battery_soc)
 
     def get_map_name(self) -> str:
-        return self.map_name
+        with self._state_lock:
+            return str(self.map_name)
 
     def get_pose(self) -> Annotated[list[float], 3] | None:
         with self._state_lock:
@@ -529,6 +559,33 @@ class Nav2RobotAdapter(RobotAdapter):
             _wait_future(fut2, timeout_sec=self.service_call_timeout_sec)
 
         return True
+
+    # ------------------------
+    # Current map via HTTP
+    # ------------------------
+    def _fetch_current_map_name(self) -> str | None:
+        url = f"http://{self.robot_ip}:5000/deploy/getCurrentMap"
+        req = Request(url, method="GET", headers={"Accept": "application/json"})
+        try:
+            with urlopen(req, timeout=self._map_http_timeout_sec) as resp:
+                body = resp.read()
+        except URLError:
+            return None
+        except Exception:
+            return None
+
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except Exception:
+            return None
+
+        if payload.get("code") != 0:
+            return None
+        data = payload.get("data") or {}
+        map_name = data.get("map_name")
+        if not map_name:
+            return None
+        return str(map_name)
 
     # ------------------------
     # Issue tickets
