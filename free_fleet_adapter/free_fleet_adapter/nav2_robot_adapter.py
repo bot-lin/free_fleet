@@ -31,7 +31,6 @@ from action_msgs.msg import GoalStatus as RosGoalStatus
 from geometry_msgs.msg import Pose as RosPose
 from geometry_msgs.msg import PoseStamped as RosPoseStamped
 from nav2_msgs.action import NavigateThroughPoses
-from nav2_msgs.srv import LoadMap
 from sensor_msgs.msg import BatteryState as RosBatteryState
 from tf_transformations import euler_from_quaternion, quaternion_from_euler
 
@@ -156,14 +155,7 @@ class Nav2RobotAdapter(RobotAdapter):
             self.node, NavigateThroughPoses, self._nav_action_name
         )
 
-        self._map_server_load_map_srv = f'/{namespacify("map_server/load_map", self.name)}'
-        self._mask_server_load_map_srv = f'/{namespacify("filter_mask_server/load_map", self.name)}'
-        self._map_load_client = self.node.create_client(
-            LoadMap, self._map_server_load_map_srv
-        )
-        self._mask_load_client = self.node.create_client(
-            LoadMap, self._mask_server_load_map_srv
-        )
+        # Map switching is done via robot HTTP API (see change_map)
 
         # Initialize robot pose
         init_timeout_sec = float(self.robot_config_yaml.get("init_timeout_sec", 10))
@@ -536,32 +528,66 @@ class Nav2RobotAdapter(RobotAdapter):
         send_future.add_done_callback(_on_goal_response)
 
     def change_map(self, map_name: str) -> bool:
-        map_url = f"/data/maps/{map_name}.yaml"
-        req = LoadMap.Request()
-        req.map_url = map_url
+        # Change map via robot HTTP API
+        url = f"http://{self.robot_ip}:5000/deploy/changeMapByName/{map_name}"
+        req = Request(
+            url,
+            method="GET",
+            headers={
+                "Accept": "application/json",
+                "x-api-key": "1234567890",
+            },
+        )
 
-        if not self._map_load_client.wait_for_service(timeout_sec=self.service_call_timeout_sec):
+        self.node.get_logger().info(
+            f'Robot [{self.name}] changing map via HTTP: [{url}] '
+            f'(timeout={self.service_call_timeout_sec:.2f}s)...'
+        )
+
+        try:
+            with urlopen(req, timeout=self.service_call_timeout_sec) as resp:
+                status = getattr(resp, "status", None)
+                body = resp.read()
+        except HTTPError as e:
             self.node.get_logger().error(
-                f"LoadMap service not available: [{self._map_server_load_map_srv}]"
+                f'HTTP {e.code} from {url}: {e.reason}'
+            )
+            return False
+        except URLError as e:
+            self.node.get_logger().error(
+                f'HTTP request to {url} failed: {type(e.reason)}: {e.reason}'
+            )
+            return False
+        except Exception as e:
+            self.node.get_logger().error(
+                f'HTTP request to {url} failed: {type(e)}: {e}'
             )
             return False
 
-        fut = self._map_load_client.call_async(req)
-        if not _wait_future(fut, timeout_sec=self.service_call_timeout_sec):
-            self.node.get_logger().error("LoadMap call timed out")
-            return False
-        rep = fut.result()
-        if rep is None or rep.result != 0:
-            self.node.get_logger().error(f"LoadMap failed: result={getattr(rep, 'result', None)}")
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except Exception:
+            preview = body[:200]
+            self.node.get_logger().error(
+                f'Invalid JSON from {url} (http_status={status}): {preview!r}'
+            )
             return False
 
-        # Optional: filter mask server
-        if self._mask_load_client.service_is_ready():
-            mask_req = LoadMap.Request()
-            mask_req.map_url = f"/data/maps/mask/{map_name}.yaml"
-            fut2 = self._mask_load_client.call_async(mask_req)
-            _wait_future(fut2, timeout_sec=self.service_call_timeout_sec)
+        if payload.get("code") != 0:
+            self.node.get_logger().error(
+                f'changeMapByName failed: code={payload.get("code")} payload={payload}'
+            )
+            return False
 
+        msg = payload.get("message")
+        if msg:
+            self.node.get_logger().info(
+                f'Robot [{self.name}] changeMapByName success: {msg}'
+            )
+
+        # Update local map name immediately
+        with self._state_lock:
+            self.map_name = str(map_name)
         return True
 
     # ------------------------
