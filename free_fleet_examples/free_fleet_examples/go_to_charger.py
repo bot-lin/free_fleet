@@ -109,7 +109,7 @@ class TaskRequester(Node):
                     'description':
                     {
                         # for fleet manager to start action process
-                        'action': "spin180"
+                        'action_name': "spin180"
                     },
                     'use_tool_sink': use_tool_sink
                     }
