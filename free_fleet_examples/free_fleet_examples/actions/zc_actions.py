@@ -34,7 +34,7 @@ class ActionFactory(RobotActionFactory):
     def __init__(self, context: RobotActionContext):
         RobotActionFactory.__init__(self, context)
         self.supported_actions = [
-            'go_to_charger'
+            'nest_action'
         ]
 
     def supports_action(self, category: str) -> bool:
@@ -51,8 +51,8 @@ class ActionFactory(RobotActionFactory):
         # See https://github.com/open-rmf/rmf_ros2/pull/392 for more info.
         # execution.set_automatic_cancel(False)
         match category:
-            case 'go_to_charger':
-                return GoToCharger(description, execution, self.context)
+            case 'nest_action':
+                return NestAction(description, execution, self.context)
 
 
 
@@ -62,7 +62,7 @@ class ActionFactory(RobotActionFactory):
 # Empty topic with topic name `cancel_delayed_hello_world`.
 # Cancel the action with the following command
 # ros2 topic pub --once  /cancel_delayed_hello_world std_msgs/msg/Empty "{}"
-class GoToCharger(RobotAction):
+class NestAction(RobotAction):
 
     def __init__(
         self,
@@ -73,8 +73,8 @@ class GoToCharger(RobotAction):
         RobotAction.__init__(self, context, execution)
 
         self.context.node.get_logger().info(
-            'New GoToCharger requested for robot '
-            f'[{self.context.robot_name}]'
+            'New NestAction requested for robot '
+            f'[{self.context.robot_name}] with description={description}'
         )
         self.description = description
         self.start_millis = None
@@ -83,7 +83,7 @@ class GoToCharger(RobotAction):
         self.state = RobotActionState.IN_PROGRESS
 
         # Custom cancellation interaction
-        self.cancel_topic = 'cancel_go_to_charger'
+        self.cancel_topic = 'cancel_nest_action'
         self.cancel_sub = None
 
         # Nav2 NavigateThroughPoses action client (namespaced)
@@ -98,7 +98,7 @@ class GoToCharger(RobotAction):
     def _cancel_action(self, msg: Empty):
         self.state = RobotActionState.CANCELING
         self.context.node.get_logger().info(
-            'Received custom cancel command go_to_charger action for '
+            'Received custom cancel command nest_action action for '
             f'robot [{self.context.robot_name}]'
         )
 
@@ -120,7 +120,7 @@ class GoToCharger(RobotAction):
         self.cancel_task_of_action(
             _cancel_success,
             _cancel_fail,
-            'Custom cancel behavior of go_to_charger action'
+            'Custom cancel behavior of nest_action action'
         )
 
     def update_action(self) -> RobotActionState:
@@ -158,7 +158,16 @@ class GoToCharger(RobotAction):
             init_pose.header.stamp = self.context.node.get_clock().now().to_msg()
             init_pose.header.frame_id = 'map'
             goal.poses = [init_pose]
-            goal.behavior_tree = '/data/actions/reflector_docking.xml'
+            try:
+                action_name = self.description.get('action_name')
+            except Exception as e:
+                self.context.node.get_logger().error(
+                    f'[{self.context.robot_name}] Failed to get action name: '
+                    f'{type(e)}: {e}'
+                )
+                self.state = RobotActionState.FAILED
+                return self.state
+            goal.behavior_tree = f'/data/actions/{action_name}.xml'
 
             # Optional fields exist on some Nav2 versions
             if hasattr(goal, 'planner_id'):
@@ -169,8 +178,9 @@ class GoToCharger(RobotAction):
                 goal.goal_checker_id = ''
 
             self.context.node.get_logger().info(
-                f'[{self.context.robot_name}] Sending GoToCharger docking goal '
-                f'via [{self._action_name}]'
+                f'[{self.context.robot_name}] Sending NestAction goal '
+                f'via [{self._action_name}] '
+                f'bt=[{goal.behavior_tree}] description={self.description}'
             )
 
             self._send_goal_future = self._client.send_goal_async(goal)
@@ -183,7 +193,7 @@ class GoToCharger(RobotAction):
                     self._goal_handle = self._send_goal_future.result()
                 except Exception as e:
                     self.context.node.get_logger().error(
-                        f'[{self.context.robot_name}] Failed to send docking goal: '
+                        f'[{self.context.robot_name}] Failed to send NestAction goal: '
                         f'{type(e)}: {e}'
                     )
                     self.state = RobotActionState.FAILED
@@ -191,14 +201,16 @@ class GoToCharger(RobotAction):
 
                 if not self._goal_handle.accepted:
                     self.context.node.get_logger().error(
-                        f'[{self.context.robot_name}] Docking goal rejected'
+                        f'[{self.context.robot_name}] NestAction goal rejected '
+                        f'description={self.description}'
                     )
                     self.state = RobotActionState.FAILED
                     return self.state
 
                 self._result_future = self._goal_handle.get_result_async()
                 self.context.node.get_logger().info(
-                    f'[{self.context.robot_name}] Docking goal accepted'
+                    f'[{self.context.robot_name}] NestAction goal accepted '
+                    f'description={self.description}'
                 )
 
         # Wait for result
@@ -220,14 +232,16 @@ class GoToCharger(RobotAction):
 
             if status == GoalStatus.STATUS_SUCCEEDED:
                 self.context.node.get_logger().info(
-                    f'[{self.context.robot_name}] Docking succeeded'
+                    f'[{self.context.robot_name}] NestAction succeeded '
+                    f'description={self.description}'
                 )
                 self.state = RobotActionState.COMPLETED
                 return self.state
 
             if status in (GoalStatus.STATUS_CANCELED, GoalStatus.STATUS_ABORTED):
                 self.context.node.get_logger().warn(
-                    f'[{self.context.robot_name}] Docking ended with status [{status}]'
+                    f'[{self.context.robot_name}] NestAction ended with status [{status}] '
+                    f'description={self.description}'
                 )
                 self.state = RobotActionState.FAILED
                 return self.state
