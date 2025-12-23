@@ -109,7 +109,7 @@ class TaskRequester(Node):
                     'description':
                     {
                         # for fleet manager to start action process
-                        'action': "reflector_docking"
+                        'action': "spin180"
                     },
                     'use_tool_sink': use_tool_sink
                     }
@@ -128,7 +128,7 @@ class TaskRequester(Node):
             'description': self.args.pickup})
         activities.append({
             'category': 'perform_action',
-            'description': __create_perform_action('go_to_charger')})
+            'description': __create_perform_action('nest_action')})
         # activities.append({
         #     'category': 'go_to_place',
         #     'description': self.args.dropoff})
