@@ -13,7 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Dispatch a cart delivery."""
+"""Dispatch a simple task: go to a place then perform a configurable action."""
 
 import argparse
 import asyncio
@@ -44,9 +44,10 @@ class TaskRequester(Node):
         parser.add_argument('-p', '--pickup', required=True,
                             type=str,
                             help='Pickup waypoint name')
-        parser.add_argument('-d', '--dropoff', required=True,
-                            type=str,
-                            help='Dropoff waypoint name')
+        # dropoff is not needed for this task
+        parser.add_argument('--action-name', required=False,
+                            type=str, default='spin180',
+                            help='Action name used by nest_action (maps to /data/actions/<action_name>.xml)')
         parser.add_argument('-F', '--fleet', type=str,
                             help='Fleet name, should define tgt with robot')
         parser.add_argument('-R', '--robot', type=str,
@@ -109,7 +110,7 @@ class TaskRequester(Node):
                     'description':
                     {
                         # for fleet manager to start action process
-                        'action_name': "spin180"
+                        'action_name': self.args.action_name
                     },
                     'use_tool_sink': use_tool_sink
                     }
